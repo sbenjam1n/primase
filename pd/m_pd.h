@@ -101,7 +101,8 @@ EXTERN t_symbol *gensym(const char *s);
 EXTERN t_class *class_new(t_symbol *name, t_newmethod newm,
     t_freemethod freem, size_t size, int flags, int arg1, ...);
 EXTERN void class_addbang(t_class *c, t_method fn);
-EXTERN void class_addfloat(t_class *c, t_method fn);
+EXTERN void class_doaddfloat(t_class *c, t_method fn);
+#define class_addfloat(x, y) class_doaddfloat((x), (t_method)(y))
 EXTERN void class_addmethod(t_class *c, t_method fn, t_symbol *sel, int arg1, ...);
 EXTERN void class_addanything(t_class *c, t_method fn);
 
