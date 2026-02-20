@@ -4,7 +4,14 @@
  * cycle (0.0–1.0) and plays them back, applying registered transforms.
  */
 
+#include <stdlib.h>
+#include <math.h>
 #include "telomere.h"
+
+/* Some Pd distributions omit t_freemethod; provide a fallback */
+#ifndef t_freemethod
+typedef void (*t_freemethod)(void *);
+#endif
 #include "telomere_transform.h"
 #include "telomere_pattern_api.h"
 
