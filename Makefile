@@ -10,7 +10,11 @@
 UNAME := $(shell uname -s)
 ifeq ($(UNAME),Darwin)
   SUFFIX = pd_darwin
-  LDFLAGS = -bundle -undefined dynamic_lookup
+  # -flat_namespace -undefined suppress is required so that Pd's symbols
+  # (class_addfloat, gensym, etc.) are resolved from Pd's process at
+  # dlopen time.  -undefined dynamic_lookup does a two-level-namespace
+  # lookup that fails with modern Pd app bundles on macOS.
+  LDFLAGS = -bundle -flat_namespace -undefined suppress
 else
   SUFFIX = pd_linux
   LDFLAGS = -shared -Wl,--export-dynamic
