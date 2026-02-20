@@ -37,6 +37,7 @@ typedef struct _telomere {
     /* --- Playback / recording --- */
     int       recording;        /* 1 = recording taps, 0 = idle           */
     int       armed;            /* 1 = armed for next cycle                */
+    int       playing;          /* 1 = playback clock is running           */
 
     /* --- Variation parameters --- */
     t_float   jitter_amt;       /* random displacement amount (0.0–1.0)    */
