@@ -24,6 +24,7 @@ t_class *telomere_class;
 static void telomere_tick(t_telomere *x) {
     if (x->play_index >= x->num_events) {
         /* Cycle complete — output event count and stop */
+        x->playing = 0;
         outlet_float(x->out_count, (t_float)x->num_events);
         return;
     }
@@ -102,6 +103,7 @@ static void telomere_bang(t_telomere *x) {
         /* Trigger playback of current pattern */
         if (x->num_events == 0) return;
         x->play_index = 0;
+        x->playing = 1;
         x->cycle_start_time = clock_getlogicaltime();
         /* Start at first event position */
         double delay = x->pattern[0] * x->cycle_length_ms;
@@ -201,6 +203,34 @@ static void telomere_dump(t_telomere *x) {
     }
 }
 
+static void telomere_play(t_telomere *x) {
+    if (x->num_events == 0) return;
+    x->play_index = 0;
+    x->playing = 1;
+    x->cycle_start_time = clock_getlogicaltime();
+    double delay = x->pattern[0] * x->cycle_length_ms;
+    if (delay < 0.1) delay = 0.1;
+    clock_delay(x->playback_clock, delay);
+}
+
+static void telomere_stop(t_telomere *x) {
+    if (x->recording) {
+        x->recording = 0;
+        outlet_float(x->out_status, 0.0f);
+    }
+    if (x->playing) {
+        clock_unset(x->playback_clock);
+        x->playing = 0;
+    }
+}
+
+static void telomere_tempo(t_telomere *x, t_float f) {
+    if (f > 0.0f) {
+        x->tempo = f;
+        x->cycle_length_ms = (60000.0 / (double)f) * x->beats_per_cycle;
+    }
+}
+
 static void telomere_help_msg(t_telomere *x) {
     post("telomere — available transforms:");
     t_transform_entry *cur = telomere_get_registry_head();
@@ -257,6 +287,7 @@ static void *telomere_new(t_float tempo) {
     /* Playback */
     x->recording = 0;
     x->armed = 0;
+    x->playing = 0;
     x->play_index = 0;
 
     /* Variation */
@@ -319,6 +350,12 @@ EXTERN void telomere_setup(void) {
                     gensym("skip"), A_DEFFLOAT, 0);
     class_addmethod(telomere_class, (t_method)telomere_beats,
                     gensym("beats"), A_DEFFLOAT, 0);
+    class_addmethod(telomere_class, (t_method)telomere_play,
+                    gensym("play"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_stop,
+                    gensym("stop"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_tempo,
+                    gensym("tempo"), A_DEFFLOAT, 0);
     class_addmethod(telomere_class, (t_method)telomere_dump,
                     gensym("dump"), 0);
     class_addmethod(telomere_class, (t_method)telomere_help_msg,

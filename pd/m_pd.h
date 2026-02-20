@@ -135,6 +135,7 @@ EXTERN void pd_error(void *obj, const char *fmt, ...);
 typedef struct _clock t_clock;
 EXTERN t_clock *clock_new(void *owner, t_method fn);
 EXTERN void     clock_delay(t_clock *c, double ms);
+EXTERN void     clock_unset(t_clock *c);
 EXTERN void     clock_free(t_clock *c);
 EXTERN double   clock_getlogicaltime(void);
 EXTERN double   clock_gettimesince(double t);
