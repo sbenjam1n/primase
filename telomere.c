@@ -150,12 +150,10 @@ static void telomere_anything(t_telomere *x, t_symbol *s, int argc, t_atom *argv
 /* Built-in messages (not routed through registry)                    */
 /* ------------------------------------------------------------------ */
 
-static void telomere_record(t_telomere *x, t_float f) {
-    x->recording = (f != 0.0f);
-    if (x->recording) {
-        x->cycle_start_time = clock_getlogicaltime();
-    }
-    outlet_float(x->out_status, x->recording ? 1.0f : 0.0f);
+static void telomere_record(t_telomere *x) {
+    x->recording = 1;
+    x->cycle_start_time = clock_getlogicaltime();
+    outlet_float(x->out_status, 1.0f);
 }
 
 static void telomere_clear(t_telomere *x) {
@@ -337,7 +335,7 @@ EXTERN void telomere_setup(void) {
 
     /* Built-in messages */
     class_addmethod(telomere_class, (t_method)telomere_record,
-                    gensym("record"), A_DEFFLOAT, 0);
+                    gensym("record"), 0);
     class_addmethod(telomere_class, (t_method)telomere_clear,
                     gensym("clear"), 0);
     class_addmethod(telomere_class, (t_method)telomere_quantize,
