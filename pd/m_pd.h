@@ -75,14 +75,34 @@ static inline t_symbol *atom_getsymbolarg(int which, int argc, const t_atom *arg
 #define SETSYMBOL(atom, s) do { (atom)->a_type = A_SYMBOL; (atom)->a_w.w_symbol = (s); } while(0)
 
 /* ---- object system ---- */
+
+/*
+ * These structs MUST match vanilla Pd's layout exactly, because
+ * t_object is embedded as the first member of every external's struct
+ * and sizeof(t_telomere) is passed to class_new.  A size mismatch
+ * causes Pd's internal writes (outlet/inlet pointers, etc.) to land
+ * on the external's own fields → heap corruption → SIGSEGV.
+ */
+
+typedef struct _class *t_pd;
+
+typedef struct _gobj {
+    t_pd            *g_pd;
+    struct _gobj    *g_next;
+} t_gobj;
+
 typedef struct _text {
-    void *dummy;
+    t_gobj           te_g;
+    void            *te_binbuf;     /* t_binbuf * */
+    struct _outlet  *te_outlet;
+    struct _inlet   *te_inlet;
+    short            te_xpix;
+    short            te_ypix;
+    short            te_width;
+    short            te_type;
 } t_object;
 
-typedef struct _class {
-    void *c_methods;
-    void *c_name;
-} t_class;
+typedef struct _class t_class;
 
 typedef void     (*t_method)(void);
 typedef void    *(*t_newmethod)(void);
