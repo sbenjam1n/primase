@@ -6,6 +6,8 @@
 
 #include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 #include "telomere.h"
 
 /* Some Pd distributions omit t_freemethod; provide a fallback */
@@ -198,8 +200,74 @@ static void telomere_dump(t_telomere *x) {
     post("telomere: %d events, tempo=%.1f, grid=%d, q=%.2f",
          x->num_events, x->tempo, x->grid, x->quantize_pct);
     for (int i = 0; i < x->num_events; i++) {
-        post("  [%d] %.6f", i, x->pattern[i]);
+        post("  [%d] pos=%.6f vel=%.3f", i, x->pattern[i], x->velocity[i]);
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Build a filesystem path: relative names are resolved against the   */
+/* current canvas directory so patches work portably.                 */
+/* ------------------------------------------------------------------ */
+
+static void make_filepath(char *out, size_t sz, t_symbol *sym) {
+    const char *fn = sym->s_name;
+    if (fn[0] == '/' || fn[0] == '~') {
+        /* absolute */
+        strncpy(out, fn, sz - 1);
+        out[sz - 1] = '\0';
+        return;
+    }
+    t_canvas *cv = canvas_getcurrent();
+    t_symbol *dir = cv ? canvas_getdir(cv) : NULL;
+    if (dir && dir->s_name && dir->s_name[0])
+        snprintf(out, sz, "%s/%s", dir->s_name, fn);
+    else
+        strncpy(out, fn, sz - 1);
+    out[sz - 1] = '\0';
+}
+
+static void telomere_write(t_telomere *x, t_symbol *sym) {
+    char path[4096];
+    make_filepath(path, sizeof(path), sym);
+
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        pd_error(x, "telomere: write: cannot open '%s'", path);
+        return;
+    }
+    for (int i = 0; i < x->num_events; i++)
+        fprintf(f, "%.9g %.9g\n", x->pattern[i], x->velocity[i]);
+    fclose(f);
+    post("telomere: wrote %d events to '%s'", x->num_events, path);
+}
+
+static void telomere_read(t_telomere *x, t_symbol *sym) {
+    char path[4096];
+    make_filepath(path, sizeof(path), sym);
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        pd_error(x, "telomere: read: cannot open '%s'", path);
+        return;
+    }
+    pattern_clear(x);
+    float pos, vel;
+    int loaded = 0;
+    while (fscanf(f, "%f %f", &pos, &vel) == 2) {
+        pattern_append_event(x, (t_float)pos, (t_float)vel);
+        loaded++;
+    }
+    /* also accept position-only files (no velocity column) */
+    if (loaded == 0) {
+        rewind(f);
+        while (fscanf(f, "%f", &pos) == 1) {
+            pattern_append_event(x, (t_float)pos, 1.0f);
+            loaded++;
+        }
+    }
+    fclose(f);
+    post("telomere: read %d events from '%s'", loaded, path);
+    outlet_float(x->out_count, (t_float)x->num_events);
 }
 
 static void telomere_play(t_telomere *x) {
@@ -365,6 +433,10 @@ EXTERN void telomere_setup(void) {
                     gensym("tempo"), A_DEFFLOAT, 0);
     class_addmethod(telomere_class, (t_method)telomere_dump,
                     gensym("dump"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_write,
+                    gensym("write"), A_SYMBOL, 0);
+    class_addmethod(telomere_class, (t_method)telomere_read,
+                    gensym("read"), A_SYMBOL, 0);
     class_addmethod(telomere_class, (t_method)telomere_help_msg,
                     gensym("help"), 0);
 
