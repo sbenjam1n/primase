@@ -60,6 +60,7 @@ static void telomere_tick(t_telomere *x) {
     }
 
     /* Output event */
+    outlet_float(x->out_velocity, pattern_get_velocity(x, x->play_index));
     outlet_float(x->out_position, out_pos);
     outlet_bang(x->out_bang);
 
@@ -97,7 +98,7 @@ static void telomere_bang(t_telomere *x) {
             if (pos >= 1.0f) pos -= 1.0f;
         }
 
-        pattern_append_event(x, pos);
+        pattern_append_event(x, pos, x->current_velocity);
         outlet_float(x->out_count, (t_float)x->num_events);
     } else {
         /* Trigger playback of current pattern */
@@ -261,8 +262,10 @@ static void *telomere_new(t_float tempo) {
 
     /* Pattern storage */
     x->pattern_alloc = 32;
-    x->pattern = (t_float *)getbytes(x->pattern_alloc * sizeof(t_float));
+    x->pattern  = (t_float *)getbytes(x->pattern_alloc * sizeof(t_float));
+    x->velocity = (t_float *)getbytes(x->pattern_alloc * sizeof(t_float));
     x->num_events = 0;
+    x->current_velocity = 1.0f;
 
     /* Euclidean */
     x->euclid_pattern = NULL;
@@ -292,14 +295,18 @@ static void *telomere_new(t_float tempo) {
     x->jitter_amt = 0.0f;
     x->skip_prob = 0.0f;
 
-    /* Outlets (right to left) */
+    /* Outlets (left to right: bang, position, velocity, count, status) */
     x->out_bang     = outlet_new(&x->x_obj, gensym("bang"));
     x->out_position = outlet_new(&x->x_obj, gensym("float"));
+    x->out_velocity = outlet_new(&x->x_obj, gensym("float"));
     x->out_count    = outlet_new(&x->x_obj, gensym("float"));
     x->out_status   = outlet_new(&x->x_obj, gensym("float"));
 
     /* Clock */
     x->playback_clock = clock_new(x, (t_method)telomere_tick);
+
+    /* Velocity inlet (right of main inlet) */
+    floatinlet_new(&x->x_obj, &x->current_velocity);
 
     /* Inlet */
     x->f_inlet = 0.0f;
@@ -310,7 +317,9 @@ static void *telomere_new(t_float tempo) {
 static void telomere_free(t_telomere *x) {
     clock_free(x->playback_clock);
     if (x->pattern)
-        freebytes(x->pattern, x->pattern_alloc * sizeof(t_float));
+        freebytes(x->pattern,  x->pattern_alloc * sizeof(t_float));
+    if (x->velocity)
+        freebytes(x->velocity, x->pattern_alloc * sizeof(t_float));
     if (x->euclid_pattern)
         freebytes(x->euclid_pattern, x->euclid_len * sizeof(int));
 }

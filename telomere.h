@@ -12,9 +12,13 @@ typedef struct _telomere {
     t_object  x_obj;
 
     /* --- Pattern storage --- */
-    t_float  *pattern;          /* dynamically allocated event buffer      */
+    t_float  *pattern;          /* dynamically allocated position buffer   */
+    t_float  *velocity;         /* parallel velocity buffer (0.0–1.0)      */
     int       num_events;       /* current number of recorded events       */
     int       pattern_alloc;    /* allocated capacity                      */
+
+    /* --- Velocity input --- */
+    t_float   current_velocity; /* latched from velocity inlet, default 1.0 */
 
     /* --- Euclidean pattern --- */
     int      *euclid_pattern;   /* boolean hits for euclidean rhythm       */
@@ -46,6 +50,7 @@ typedef struct _telomere {
     /* --- Outlets --- */
     t_outlet *out_bang;         /* fires a bang per event during playback  */
     t_outlet *out_position;     /* outputs event position as float         */
+    t_outlet *out_velocity;     /* outputs event velocity as float         */
     t_outlet *out_count;        /* outputs current event count             */
     t_outlet *out_status;       /* outputs status messages                 */
 

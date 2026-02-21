@@ -12,24 +12,26 @@ static void transform_degrade(t_telomere *x, int argc, t_atom *argv) {
     if (prob < 0.0f) prob = 0.0f;
     if (prob > 1.0f) prob = 1.0f;
 
-    /* Remove events with given probability, keeping at least 1 */
     t_float survivors[TELOMERE_MAX_EVENTS];
+    t_float surv_vel[TELOMERE_MAX_EVENTS];
     int surv_count = 0;
 
     for (int i = 0; i < n; i++) {
         float r = (float)rand() / (float)RAND_MAX;
         if (r >= prob) {
-            survivors[surv_count++] = pattern_get_event(x, i);
+            survivors[surv_count] = pattern_get_event(x, i);
+            surv_vel[surv_count]  = pattern_get_velocity(x, i);
+            surv_count++;
         }
     }
 
-    /* Ensure at least one event survives */
     if (surv_count == 0 && n > 0) {
         survivors[0] = pattern_get_event(x, 0);
+        surv_vel[0]  = pattern_get_velocity(x, 0);
         surv_count = 1;
     }
 
-    pattern_replace(x, survivors, surv_count);
+    pattern_replace(x, survivors, surv_vel, surv_count);
 }
 
 void degrade_register(void) {

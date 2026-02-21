@@ -12,18 +12,20 @@ static void transform_skip(t_telomere *x, int argc, t_atom *argv) {
     if (prob < 0.0f) prob = 0.0f;
     if (prob > 1.0f) prob = 1.0f;
 
-    /* Copy surviving events into a temp buffer */
     t_float survivors[TELOMERE_MAX_EVENTS];
+    t_float surv_vel[TELOMERE_MAX_EVENTS];
     int surv_count = 0;
 
     for (int i = 0; i < n; i++) {
         float r = (float)rand() / (float)RAND_MAX;
         if (r >= prob) {
-            survivors[surv_count++] = pattern_get_event(x, i);
+            survivors[surv_count]   = pattern_get_event(x, i);
+            surv_vel[surv_count]    = pattern_get_velocity(x, i);
+            surv_count++;
         }
     }
 
-    pattern_replace(x, survivors, surv_count);
+    pattern_replace(x, survivors, surv_vel, surv_count);
 }
 
 void skip_register(void) {

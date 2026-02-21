@@ -10,10 +10,10 @@ static void transform_fast(t_telomere *x, int argc, t_atom *argv) {
     int factor = (int)atom_getfloatarg(0, argc, argv);
     if (factor < 2) factor = 2;
 
-    /* Copy original pattern */
     t_float orig[TELOMERE_MAX_EVENTS];
+    t_float orig_vel[TELOMERE_MAX_EVENTS];
     int count;
-    pattern_copy_to(x, orig, &count);
+    pattern_copy_to(x, orig, orig_vel, &count);
 
     int new_size = count * factor;
     if (new_size > TELOMERE_MAX_EVENTS) new_size = TELOMERE_MAX_EVENTS;
@@ -27,7 +27,9 @@ static void transform_fast(t_telomere *x, int argc, t_atom *argv) {
         for (int i = 0; i < count && idx < new_size; i++) {
             t_float val = base + orig[i] * sub_len;
             if (val >= 1.0f) val -= 1.0f;
-            pattern_set_event(x, idx++, val);
+            pattern_set_event(x, idx, val);
+            pattern_set_velocity(x, idx, orig_vel[i]);
+            idx++;
         }
     }
 
