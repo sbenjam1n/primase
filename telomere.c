@@ -31,6 +31,12 @@ static void telomere_tick(t_telomere *x) {
         return;
     }
 
+    /* Metric modulation scale: delays are multiplied by den/num so
+     * a 3:2 ratio compresses the pattern into 2/3 of the cycle time. */
+    double metric_scale = (x->metric_num > 0.0f && x->metric_den > 0.0f)
+                        ? (double)x->metric_den / (double)x->metric_num
+                        : 1.0;
+
     t_float pos = x->pattern[x->play_index];
 
     /* Apply skip probability */
@@ -41,8 +47,8 @@ static void telomere_tick(t_telomere *x) {
             x->play_index++;
             if (x->play_index < x->num_events) {
                 double next_pos = x->pattern[x->play_index];
-                double delay = next_pos * x->cycle_length_ms
-                             - (pos * x->cycle_length_ms);
+                double delay = (next_pos * x->cycle_length_ms
+                             - (pos * x->cycle_length_ms)) * metric_scale;
                 if (delay < 0.1) delay = 0.1;
                 clock_delay(x->playback_clock, delay);
             } else {
@@ -70,7 +76,7 @@ static void telomere_tick(t_telomere *x) {
     x->play_index++;
     if (x->play_index < x->num_events) {
         double next_pos = x->pattern[x->play_index];
-        double delay = (next_pos - pos) * x->cycle_length_ms;
+        double delay = (next_pos - pos) * x->cycle_length_ms * metric_scale;
         if (delay < 0.1) delay = 0.1;
         clock_delay(x->playback_clock, delay);
     } else {
@@ -108,8 +114,11 @@ static void telomere_bang(t_telomere *x) {
         x->play_index = 0;
         x->playing = 1;
         x->cycle_start_time = clock_getlogicaltime();
-        /* Start at first event position */
-        double delay = x->pattern[0] * x->cycle_length_ms;
+        /* Start at first event position, honouring metric modulation */
+        double metric_scale = (x->metric_num > 0.0f && x->metric_den > 0.0f)
+                            ? (double)x->metric_den / (double)x->metric_num
+                            : 1.0;
+        double delay = x->pattern[0] * x->cycle_length_ms * metric_scale;
         if (delay < 0.1) delay = 0.1;
         clock_delay(x->playback_clock, delay);
     }
@@ -267,7 +276,22 @@ static void telomere_read(t_telomere *x, t_symbol *sym) {
     }
     fclose(f);
     post("telomere: read %d events from '%s'", loaded, path);
-    outlet_float(x->out_count, (t_float)x->num_events);
+
+    if (x->playing && x->num_events > 0) {
+        /* Keep playback running: restart the new pattern from the
+         * beginning, applying the current metric modulation ratio. */
+        x->play_index = 0;
+        x->cycle_start_time = clock_getlogicaltime();
+        double metric_scale = (x->metric_num > 0.0f && x->metric_den > 0.0f)
+                            ? (double)x->metric_den / (double)x->metric_num
+                            : 1.0;
+        double delay = (double)x->pattern[0] * x->cycle_length_ms * metric_scale;
+        if (delay < 0.1) delay = 0.1;
+        clock_unset(x->playback_clock);
+        clock_delay(x->playback_clock, delay);
+    } else {
+        outlet_float(x->out_count, (t_float)x->num_events);
+    }
 }
 
 static void telomere_play(t_telomere *x) {
@@ -275,9 +299,21 @@ static void telomere_play(t_telomere *x) {
     x->play_index = 0;
     x->playing = 1;
     x->cycle_start_time = clock_getlogicaltime();
-    double delay = x->pattern[0] * x->cycle_length_ms;
+    double metric_scale = (x->metric_num > 0.0f && x->metric_den > 0.0f)
+                        ? (double)x->metric_den / (double)x->metric_num
+                        : 1.0;
+    double delay = x->pattern[0] * x->cycle_length_ms * metric_scale;
     if (delay < 0.1) delay = 0.1;
     clock_delay(x->playback_clock, delay);
+}
+
+static void telomere_metric(t_telomere *x, t_float num, t_float den) {
+    if (num <= 0.0f || den <= 0.0f) {
+        pd_error(x, "telomere: metric ratio must be positive (got %g:%g)", num, den);
+        return;
+    }
+    x->metric_num = num;
+    x->metric_den = den;
 }
 
 static void telomere_stop(t_telomere *x) {
@@ -317,6 +353,9 @@ static void telomere_help_msg(t_telomere *x) {
     post("  jitter <0-1>    set playback jitter");
     post("  skip <0-1>      set skip probability");
     post("  beats <n>       set beats per cycle");
+    post("  metric <n> <d>  set metric modulation ratio n:d");
+    post("  write <file>    export pattern to text file");
+    post("  read  <file>    import pattern (playback continues)");
     post("  dump            print pattern to console");
     (void)x;
 }
@@ -431,6 +470,8 @@ EXTERN void telomere_setup(void) {
                     gensym("stop"), 0);
     class_addmethod(telomere_class, (t_method)telomere_tempo,
                     gensym("tempo"), A_DEFFLOAT, 0);
+    class_addmethod(telomere_class, (t_method)telomere_metric,
+                    gensym("metric"), A_FLOAT, A_FLOAT, 0);
     class_addmethod(telomere_class, (t_method)telomere_dump,
                     gensym("dump"), 0);
     class_addmethod(telomere_class, (t_method)telomere_write,
