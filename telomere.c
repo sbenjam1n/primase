@@ -31,12 +31,6 @@ static void telomere_tick(t_telomere *x) {
         return;
     }
 
-    /* Metric modulation scale: delays are multiplied by den/num so
-     * a 3:2 ratio compresses the pattern into 2/3 of the cycle time. */
-    double metric_scale = (x->metric_num > 0.0f && x->metric_den > 0.0f)
-                        ? (double)x->metric_den / (double)x->metric_num
-                        : 1.0;
-
     t_float pos = x->pattern[x->play_index];
 
     /* Apply skip probability */
@@ -47,8 +41,8 @@ static void telomere_tick(t_telomere *x) {
             x->play_index++;
             if (x->play_index < x->num_events) {
                 double next_pos = x->pattern[x->play_index];
-                double delay = (next_pos * x->cycle_length_ms
-                             - (pos * x->cycle_length_ms)) * metric_scale;
+                double delay = next_pos * x->cycle_length_ms
+                             - (pos * x->cycle_length_ms);
                 if (delay < 0.1) delay = 0.1;
                 clock_delay(x->playback_clock, delay);
             } else {
@@ -76,7 +70,7 @@ static void telomere_tick(t_telomere *x) {
     x->play_index++;
     if (x->play_index < x->num_events) {
         double next_pos = x->pattern[x->play_index];
-        double delay = (next_pos - pos) * x->cycle_length_ms * metric_scale;
+        double delay = (next_pos - pos) * x->cycle_length_ms;
         if (delay < 0.1) delay = 0.1;
         clock_delay(x->playback_clock, delay);
     } else {
@@ -114,11 +108,7 @@ static void telomere_bang(t_telomere *x) {
         x->play_index = 0;
         x->playing = 1;
         x->cycle_start_time = clock_getlogicaltime();
-        /* Start at first event position, honouring metric modulation */
-        double metric_scale = (x->metric_num > 0.0f && x->metric_den > 0.0f)
-                            ? (double)x->metric_den / (double)x->metric_num
-                            : 1.0;
-        double delay = x->pattern[0] * x->cycle_length_ms * metric_scale;
+        double delay = x->pattern[0] * x->cycle_length_ms;
         if (delay < 0.1) delay = 0.1;
         clock_delay(x->playback_clock, delay);
     }
@@ -299,10 +289,7 @@ static void telomere_play(t_telomere *x) {
     x->play_index = 0;
     x->playing = 1;
     x->cycle_start_time = clock_getlogicaltime();
-    double metric_scale = (x->metric_num > 0.0f && x->metric_den > 0.0f)
-                        ? (double)x->metric_den / (double)x->metric_num
-                        : 1.0;
-    double delay = x->pattern[0] * x->cycle_length_ms * metric_scale;
+    double delay = x->pattern[0] * x->cycle_length_ms;
     if (delay < 0.1) delay = 0.1;
     clock_delay(x->playback_clock, delay);
 }
