@@ -2,6 +2,15 @@
  *
  * telomere records rhythmic tap-patterns as fractional positions within a
  * cycle (0.0–1.0) and plays them back, applying registered transforms.
+ *
+ * Architecture:
+ *   source[]  — frozen recorded/imported positions; never touched by chain
+ *   pattern[] — derived buffer: source → chain transforms applied in order
+ *   playback  — reads pattern[]
+ *
+ * Recording and importing write to source then call telomere_chain_eval()
+ * to re-derive pattern[].  Direct transform messages (reverse, fast, etc.)
+ * still mutate pattern[] directly for backward compatibility.
  */
 
 #include <stdlib.h>
@@ -10,7 +19,6 @@
 #include <string.h>
 #include "telomere.h"
 
-/* Some Pd distributions omit t_freemethod; provide a fallback */
 #ifndef t_freemethod
 typedef void (*t_freemethod)(void *);
 #endif
@@ -20,31 +28,75 @@ typedef void (*t_freemethod)(void *);
 t_class *telomere_class;
 
 /* ------------------------------------------------------------------ */
+/* Forward declarations                                               */
+/* ------------------------------------------------------------------ */
+
+static void telomere_chain_eval(t_telomere *x);
+
+/* ------------------------------------------------------------------ */
+/* Helper: compute swing-adjusted effective position for event i      */
+/* ------------------------------------------------------------------ */
+
+static double effective_pos(t_telomere *x, int index) {
+    double p = (double)x->pattern[index];
+    if (x->swing_amt != 0.0f && (index % 2 == 1)) {
+        p += (double)x->swing_amt;
+        while (p >= 1.0) p -= 1.0;
+        while (p <  0.0) p += 1.0;
+    }
+    return p;
+}
+
+/* ------------------------------------------------------------------ */
 /* Playback clock callback                                            */
 /* ------------------------------------------------------------------ */
 
 static void telomere_tick(t_telomere *x) {
+    /* Cycle end: play_index was advanced past the last event, or the
+     * scheduled cycle-boundary callback fired after the last event. */
     if (x->play_index >= x->num_events) {
-        /* Cycle complete — output event count and stop */
-        x->playing = 0;
         outlet_float(x->out_count, (t_float)x->num_events);
+
+        if (x->armed) {
+            /* Cycle-quantized record arm: start recording now */
+            x->armed     = 0;
+            x->recording = 1;
+            source_clear(x);
+            x->cycle_start_time = clock_getlogicaltime();
+            outlet_float(x->out_status, 1.0f);
+            x->playing = 0;
+            return;
+        }
+
+        if (x->loop) {
+            x->play_index = 0;
+            x->cycle_start_time = clock_getlogicaltime();
+            double delay = effective_pos(x, 0) * x->cycle_length_ms;
+            if (delay < 0.1) delay = 0.1;
+            clock_delay(x->playback_clock, delay);
+        } else {
+            x->playing = 0;
+        }
         return;
     }
 
-    t_float pos = x->pattern[x->play_index];
+    double eff_pos = effective_pos(x, x->play_index);
 
-    /* Apply skip probability */
-    if (x->skip_prob > 0.0f) {
+    /* Apply per-event skip probability */
+    t_float effective_skip = x->skip_prob * x->skip_weight[x->play_index];
+    if (effective_skip > 0.0f) {
         float r = (float)rand() / (float)RAND_MAX;
-        if (r < x->skip_prob) {
-            /* Skip this event, schedule next */
+        if (r < effective_skip) {
             x->play_index++;
             if (x->play_index < x->num_events) {
-                double next_pos = x->pattern[x->play_index];
-                double delay = next_pos * x->cycle_length_ms
-                             - (pos * x->cycle_length_ms);
+                double next_eff = effective_pos(x, x->play_index);
+                double delay = (next_eff - eff_pos) * x->cycle_length_ms;
                 if (delay < 0.1) delay = 0.1;
                 clock_delay(x->playback_clock, delay);
+            } else if (x->loop || x->armed) {
+                double remaining = (1.0 - eff_pos) * x->cycle_length_ms;
+                if (remaining < 0.1) remaining = 0.1;
+                clock_delay(x->playback_clock, remaining);
             } else {
                 outlet_float(x->out_count, (t_float)x->num_events);
             }
@@ -52,13 +104,13 @@ static void telomere_tick(t_telomere *x) {
         }
     }
 
-    /* Apply jitter */
-    t_float out_pos = pos;
+    /* Apply jitter to output position only (not scheduling) */
+    t_float out_pos = (t_float)eff_pos;
     if (x->jitter_amt > 0.0f) {
         float r = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
         out_pos += r * x->jitter_amt;
-        if (out_pos < 0.0f) out_pos += 1.0f;
-        if (out_pos > 1.0f) out_pos -= 1.0f;
+        while (out_pos >= 1.0f) out_pos -= 1.0f;
+        while (out_pos <  0.0f) out_pos += 1.0f;
     }
 
     /* Output event */
@@ -69,49 +121,66 @@ static void telomere_tick(t_telomere *x) {
     /* Schedule next event */
     x->play_index++;
     if (x->play_index < x->num_events) {
-        double next_pos = x->pattern[x->play_index];
-        double delay = (next_pos - pos) * x->cycle_length_ms;
+        double next_eff = effective_pos(x, x->play_index);
+        double delay = (next_eff - eff_pos) * x->cycle_length_ms;
         if (delay < 0.1) delay = 0.1;
         clock_delay(x->playback_clock, delay);
     } else {
-        outlet_float(x->out_count, (t_float)x->num_events);
+        /* Last event fired — schedule cycle-end callback if needed */
+        if (x->loop || x->armed) {
+            double remaining = (1.0 - eff_pos) * x->cycle_length_ms;
+            if (remaining < 0.1) remaining = 0.1;
+            clock_delay(x->playback_clock, remaining);
+        } else {
+            outlet_float(x->out_count, (t_float)x->num_events);
+        }
     }
 }
 
 /* ------------------------------------------------------------------ */
-/* Bang — record a tap or trigger playback                            */
+/* Bang — record a tap, trigger playback, or reset cycle (sync mode) */
 /* ------------------------------------------------------------------ */
 
 static void telomere_bang(t_telomere *x) {
     if (x->recording) {
-        /* Record tap as fractional position in current cycle */
         double elapsed = clock_gettimesince(x->cycle_start_time);
         t_float pos = (t_float)(elapsed / x->cycle_length_ms);
 
-        /* Clamp to 0–1 */
         while (pos >= 1.0f) pos -= 1.0f;
         if (pos < 0.0f) pos = 0.0f;
 
-        /* Apply quantization */
         if (x->quantize_pct > 0.0f && x->grid > 0) {
-            t_float step = 1.0f / (t_float)x->grid;
+            t_float step    = 1.0f / (t_float)x->grid;
             t_float nearest = roundf(pos / step) * step;
             pos = pos + (nearest - pos) * x->quantize_pct;
             if (pos >= 1.0f) pos -= 1.0f;
         }
 
-        pattern_append_event(x, pos, x->current_velocity);
+        source_append_event(x, pos, x->current_velocity);
+        telomere_chain_eval(x);
         outlet_float(x->out_count, (t_float)x->num_events);
-    } else {
-        /* Trigger playback of current pattern */
-        if (x->num_events == 0) return;
+        return;
+    }
+
+    if (x->sync_mode && x->playing) {
+        /* External sync: reset cycle phase to now */
+        clock_unset(x->playback_clock);
         x->play_index = 0;
-        x->playing = 1;
         x->cycle_start_time = clock_getlogicaltime();
-        double delay = x->pattern[0] * x->cycle_length_ms;
+        double delay = effective_pos(x, 0) * x->cycle_length_ms;
         if (delay < 0.1) delay = 0.1;
         clock_delay(x->playback_clock, delay);
+        return;
     }
+
+    /* Trigger playback */
+    if (x->num_events == 0) return;
+    x->play_index = 0;
+    x->playing    = 1;
+    x->cycle_start_time = clock_getlogicaltime();
+    double delay = effective_pos(x, 0) * x->cycle_length_ms;
+    if (delay < 0.1) delay = 0.1;
+    clock_delay(x->playback_clock, delay);
 }
 
 /* ------------------------------------------------------------------ */
@@ -126,40 +195,190 @@ static void telomere_float(t_telomere *x, t_float f) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Message dispatch — route to transform registry                     */
+/* Chain evaluation                                                   */
+/* ------------------------------------------------------------------ */
+
+static void telomere_chain_eval(t_telomere *x) {
+    pattern_replace(x, x->source, x->source_vel, x->source_count);
+
+    for (int i = 0; i < x->chain_len; i++) {
+        if (x->chain[i].bypassed) continue;
+        t_transform_entry *entry = telomere_lookup_transform(x->chain[i].name);
+        if (!entry) continue;
+        t_atom argv[4];
+        for (int j = 0; j < x->chain[i].argc; j++)
+            SETFLOAT(&argv[j], x->chain[i].argv[j]);
+        entry->fn(x, x->chain[i].argc, argv);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Chain management (variable-arg variants, dispatched from anything) */
+/* ------------------------------------------------------------------ */
+
+static void do_chain_add(t_telomere *x, int argc, t_atom *argv) {
+    if (argc < 1) {
+        pd_error(x, "telomere: chain_add requires a transform name");
+        return;
+    }
+    t_symbol *name = atom_getsymbolarg(0, argc, argv);
+    if (!name) {
+        pd_error(x, "telomere: chain_add: first argument must be a symbol");
+        return;
+    }
+    if (!telomere_lookup_transform(name)) {
+        pd_error(x, "telomere: chain_add: unknown transform '%s'", name->s_name);
+        return;
+    }
+    if (x->chain_len >= TELOMERE_MAX_CHAIN) {
+        pd_error(x, "telomere: chain is full (max %d entries)", TELOMERE_MAX_CHAIN);
+        return;
+    }
+    t_chain_entry *e = &x->chain[x->chain_len];
+    e->name     = name;
+    e->bypassed = 0;
+    e->argc     = 0;
+    int nargs = argc - 1;
+    if (nargs > 4) nargs = 4;
+    for (int i = 0; i < nargs; i++) {
+        e->argv[e->argc] = atom_getfloatarg(i + 1, argc, argv);
+        e->argc++;
+    }
+    x->chain_len++;
+    telomere_chain_eval(x);
+    post("telomere: chain[%d] = %s", x->chain_len - 1, name->s_name);
+}
+
+static void do_chain_replace(t_telomere *x, int argc, t_atom *argv) {
+    if (argc < 2) {
+        pd_error(x, "telomere: chain_replace: requires <index> <transform> [args...]");
+        return;
+    }
+    int idx = (int)atom_getfloatarg(0, argc, argv);
+    t_symbol *name = atom_getsymbolarg(1, argc, argv);
+    if (!name) {
+        pd_error(x, "telomere: chain_replace: second argument must be a symbol");
+        return;
+    }
+    if (idx < 0 || idx >= x->chain_len) {
+        pd_error(x, "telomere: chain_replace: index %d out of range (len=%d)",
+                 idx, x->chain_len);
+        return;
+    }
+    if (!telomere_lookup_transform(name)) {
+        pd_error(x, "telomere: chain_replace: unknown transform '%s'", name->s_name);
+        return;
+    }
+    t_chain_entry *e = &x->chain[idx];
+    e->name     = name;
+    e->bypassed = 0;
+    e->argc     = 0;
+    int nargs = argc - 2;
+    if (nargs > 4) nargs = 4;
+    for (int i = 0; i < nargs; i++) {
+        e->argv[e->argc] = atom_getfloatarg(i + 2, argc, argv);
+        e->argc++;
+    }
+    telomere_chain_eval(x);
+}
+
+/* ------------------------------------------------------------------ */
+/* Chain management (fixed-arg variants, registered with class_addmethod) */
+/* ------------------------------------------------------------------ */
+
+static void telomere_chain_remove(t_telomere *x, t_float fidx) {
+    int idx = (int)fidx;
+    if (idx < 0 || idx >= x->chain_len) {
+        pd_error(x, "telomere: chain_remove: index %d out of range (len=%d)",
+                 idx, x->chain_len);
+        return;
+    }
+    for (int i = idx; i < x->chain_len - 1; i++)
+        x->chain[i] = x->chain[i + 1];
+    x->chain_len--;
+    telomere_chain_eval(x);
+}
+
+static void telomere_chain_clear(t_telomere *x) {
+    x->chain_len = 0;
+    telomere_chain_eval(x);
+}
+
+static void telomere_chain_bypass(t_telomere *x, t_float fidx, t_float fbypass) {
+    int idx = (int)fidx;
+    if (idx < 0 || idx >= x->chain_len) {
+        pd_error(x, "telomere: chain_bypass: index %d out of range (len=%d)",
+                 idx, x->chain_len);
+        return;
+    }
+    x->chain[idx].bypassed = (fbypass != 0.0f) ? 1 : 0;
+    telomere_chain_eval(x);
+}
+
+static void telomere_chain_dump(t_telomere *x) {
+    post("telomere: chain (%d entr%s):", x->chain_len,
+         x->chain_len == 1 ? "y" : "ies");
+    for (int i = 0; i < x->chain_len; i++) {
+        char args[64] = "";
+        for (int j = 0; j < x->chain[i].argc; j++) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), " %.4g", x->chain[i].argv[j]);
+            strncat(args, buf, sizeof(args) - strlen(args) - 1);
+        }
+        post("  [%d]%s %s%s",
+             i,
+             x->chain[i].bypassed ? " (bypassed)" : "",
+             x->chain[i].name->s_name,
+             args);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Message dispatch — chain variable-arg messages then transform reg  */
 /* ------------------------------------------------------------------ */
 
 static void telomere_anything(t_telomere *x, t_symbol *s, int argc, t_atom *argv) {
-    t_transform_entry *entry = telomere_lookup_transform(s);
+    const char *n = s->s_name;
 
+    if (strcmp(n, "chain_add")     == 0) { do_chain_add(x, argc, argv);     return; }
+    if (strcmp(n, "chain_replace") == 0) { do_chain_replace(x, argc, argv); return; }
+
+    t_transform_entry *entry = telomere_lookup_transform(s);
     if (!entry) {
         pd_error(x, "telomere: unknown message '%s'", s->s_name);
         return;
     }
-
     if (argc < entry->min_args ||
         (entry->max_args >= 0 && argc > entry->max_args)) {
-        pd_error(x, "telomere: '%s' expects %d–%d args, got %d",
+        pd_error(x, "telomere: '%s' expects %d-%d args, got %d",
                  s->s_name, entry->min_args,
                  entry->max_args < 0 ? 999 : entry->max_args, argc);
         return;
     }
-
     entry->fn(x, argc, argv);
 }
 
 /* ------------------------------------------------------------------ */
-/* Built-in messages (not routed through registry)                    */
+/* Built-in messages                                                  */
 /* ------------------------------------------------------------------ */
 
 static void telomere_record(t_telomere *x) {
+    if (x->playing) {
+        /* Arm: start recording at next cycle boundary */
+        x->armed = 1;
+        outlet_float(x->out_status, 2.0f);
+        return;
+    }
+    x->armed     = 0;
     x->recording = 1;
+    source_clear(x);
     x->cycle_start_time = clock_getlogicaltime();
     outlet_float(x->out_status, 1.0f);
 }
 
 static void telomere_clear(t_telomere *x) {
-    pattern_clear(x);
+    source_clear(x);
+    telomere_chain_eval(x);
     outlet_float(x->out_count, 0.0f);
 }
 
@@ -188,6 +407,32 @@ static void telomere_skip(t_telomere *x, t_float prob) {
     x->skip_prob = prob;
 }
 
+static void telomere_skipweight(t_telomere *x, t_float fidx, t_float fw) {
+    int idx = (int)fidx;
+    if (idx < 0 || idx >= x->num_events) {
+        pd_error(x, "telomere: skipweight: index %d out of range (count=%d)",
+                 idx, x->num_events);
+        return;
+    }
+    if (fw < 0.0f) fw = 0.0f;
+    if (fw > 1.0f) fw = 1.0f;
+    x->skip_weight[idx] = fw;
+}
+
+static void telomere_swing(t_telomere *x, t_float amt) {
+    if (amt < -0.5f) amt = -0.5f;
+    if (amt >  0.5f) amt =  0.5f;
+    x->swing_amt = amt;
+}
+
+static void telomere_loop(t_telomere *x, t_float f) {
+    x->loop = (f != 0.0f) ? 1 : 0;
+}
+
+static void telomere_sync(t_telomere *x, t_float f) {
+    x->sync_mode = (f != 0.0f) ? 1 : 0;
+}
+
 static void telomere_beats(t_telomere *x, t_float b) {
     int bi = (int)b;
     if (bi < 1) bi = 1;
@@ -196,22 +441,22 @@ static void telomere_beats(t_telomere *x, t_float b) {
 }
 
 static void telomere_dump(t_telomere *x) {
-    post("telomere: %d events, tempo=%.1f, grid=%d, q=%.2f",
-         x->num_events, x->tempo, x->grid, x->quantize_pct);
+    post("telomere: %d events (source=%d chain=%d) tempo=%.1f grid=%d q=%.2f",
+         x->num_events, x->source_count, x->chain_len,
+         x->tempo, x->grid, x->quantize_pct);
     for (int i = 0; i < x->num_events; i++) {
-        post("  [%d] pos=%.6f vel=%.3f", i, x->pattern[i], x->velocity[i]);
+        post("  [%d] pos=%.6f vel=%.3f sw=%.2f",
+             i, x->pattern[i], x->velocity[i], x->skip_weight[i]);
     }
 }
 
 /* ------------------------------------------------------------------ */
-/* Build a filesystem path: relative names are resolved against the   */
-/* current canvas directory so patches work portably.                 */
+/* Build a filesystem path relative to current canvas directory       */
 /* ------------------------------------------------------------------ */
 
 static void make_filepath(char *out, size_t sz, t_symbol *sym) {
     const char *fn = sym->s_name;
     if (fn[0] == '/' || fn[0] == '~') {
-        /* absolute */
         strncpy(out, fn, sz - 1);
         out[sz - 1] = '\0';
         return;
@@ -228,12 +473,8 @@ static void make_filepath(char *out, size_t sz, t_symbol *sym) {
 static void telomere_write(t_telomere *x, t_symbol *sym) {
     char path[4096];
     make_filepath(path, sizeof(path), sym);
-
     FILE *f = fopen(path, "w");
-    if (!f) {
-        pd_error(x, "telomere: write: cannot open '%s'", path);
-        return;
-    }
+    if (!f) { pd_error(x, "telomere: write: cannot open '%s'", path); return; }
     for (int i = 0; i < x->num_events; i++)
         fprintf(f, "%.9g %.9g\n", x->pattern[i], x->velocity[i]);
     fclose(f);
@@ -243,39 +484,35 @@ static void telomere_write(t_telomere *x, t_symbol *sym) {
 static void telomere_read(t_telomere *x, t_symbol *sym) {
     char path[4096];
     make_filepath(path, sizeof(path), sym);
-
     FILE *f = fopen(path, "r");
-    if (!f) {
-        pd_error(x, "telomere: read: cannot open '%s'", path);
-        return;
-    }
-    pattern_clear(x);
+    if (!f) { pd_error(x, "telomere: read: cannot open '%s'", path); return; }
+
+    source_clear(x);
     float pos, vel;
     int loaded = 0;
     while (fscanf(f, "%f %f", &pos, &vel) == 2) {
-        pattern_append_event(x, (t_float)pos, (t_float)vel);
+        source_append_event(x, (t_float)pos, (t_float)vel);
         loaded++;
     }
-    /* also accept position-only files (no velocity column) */
     if (loaded == 0) {
         rewind(f);
         while (fscanf(f, "%f", &pos) == 1) {
-            pattern_append_event(x, (t_float)pos, 1.0f);
+            source_append_event(x, (t_float)pos, 1.0f);
             loaded++;
         }
     }
     fclose(f);
     post("telomere: read %d events from '%s'", loaded, path);
 
+    telomere_chain_eval(x);
+
     if (x->playing && x->num_events > 0) {
-        /* Keep playback running: restart the new pattern from the
-         * beginning, applying the current metric modulation ratio. */
         x->play_index = 0;
         x->cycle_start_time = clock_getlogicaltime();
         double metric_scale = (x->metric_num > 0.0f && x->metric_den > 0.0f)
                             ? (double)x->metric_den / (double)x->metric_num
                             : 1.0;
-        double delay = (double)x->pattern[0] * x->cycle_length_ms * metric_scale;
+        double delay = effective_pos(x, 0) * x->cycle_length_ms * metric_scale;
         if (delay < 0.1) delay = 0.1;
         clock_unset(x->playback_clock);
         clock_delay(x->playback_clock, delay);
@@ -287,9 +524,9 @@ static void telomere_read(t_telomere *x, t_symbol *sym) {
 static void telomere_play(t_telomere *x) {
     if (x->num_events == 0) return;
     x->play_index = 0;
-    x->playing = 1;
+    x->playing    = 1;
     x->cycle_start_time = clock_getlogicaltime();
-    double delay = x->pattern[0] * x->cycle_length_ms;
+    double delay = effective_pos(x, 0) * x->cycle_length_ms;
     if (delay < 0.1) delay = 0.1;
     clock_delay(x->playback_clock, delay);
 }
@@ -304,6 +541,7 @@ static void telomere_metric(t_telomere *x, t_float num, t_float den) {
 }
 
 static void telomere_stop(t_telomere *x) {
+    x->armed = 0;
     if (x->recording) {
         x->recording = 0;
         outlet_float(x->out_status, 0.0f);
@@ -311,6 +549,7 @@ static void telomere_stop(t_telomere *x) {
     if (x->playing) {
         clock_unset(x->playback_clock);
         x->playing = 0;
+        outlet_float(x->out_status, 0.0f);
     }
 }
 
@@ -322,28 +561,39 @@ static void telomere_tempo(t_telomere *x, t_float f) {
 }
 
 static void telomere_help_msg(t_telomere *x) {
-    post("telomere — available transforms:");
+    post("telomere -- available transforms:");
     t_transform_entry *cur = telomere_get_registry_head();
     while (cur) {
         post("  %-16s  args: %d-%d  %s",
-             cur->name->s_name,
-             cur->min_args,
-             cur->max_args < 0 ? 999 : cur->max_args,
-             cur->description);
+             cur->name->s_name, cur->min_args,
+             cur->max_args < 0 ? 999 : cur->max_args, cur->description);
         cur = cur->next;
     }
     post("---");
-    post("  record <0|1>    start/stop recording");
-    post("  clear           clear pattern");
-    post("  quantize <0-1>  set quantize strength");
-    post("  grid <n>        set grid subdivisions");
-    post("  jitter <0-1>    set playback jitter");
-    post("  skip <0-1>      set skip probability");
-    post("  beats <n>       set beats per cycle");
-    post("  metric <n> <d>  set metric modulation ratio n:d");
-    post("  write <file>    export pattern to text file");
-    post("  read  <file>    import pattern (playback continues)");
-    post("  dump            print pattern to console");
+    post("  record              start recording (arms if currently playing)");
+    post("  stop                stop playback or recording; cancel arm");
+    post("  play                start playback");
+    post("  loop <0|1>          auto-restart at end of cycle");
+    post("  sync <0|1>          bang = external clock reset (resets cycle phase)");
+    post("  clear               clear pattern");
+    post("  quantize <0-1>      quantize strength");
+    post("  grid <n>            grid subdivisions per cycle");
+    post("  jitter <0-1>        per-event random displacement");
+    post("  skip <0-1>          global skip probability");
+    post("  skipweight <i> <w>  per-event skip weight multiplier (0-1)");
+    post("  swing <-0.5-0.5>    delay odd-indexed events (in 0-1 space)");
+    post("  beats <n>           beats per cycle");
+    post("  tempo <bpm>         set tempo");
+    post("  metric <n> <d>      metric modulation ratio n:d");
+    post("  write <file>        export pattern to file");
+    post("  read  <file>        import pattern (playback continues)");
+    post("  chain_add <t> [..] append transform to chain");
+    post("  chain_remove <i>   remove chain entry at index i");
+    post("  chain_replace <i> <t> [..]  replace chain entry");
+    post("  chain_bypass <i> <0|1>      bypass/restore entry");
+    post("  chain_clear        clear entire chain (restores source)");
+    post("  chain_dump         print chain to console");
+    post("  dump               print pattern to console");
     (void)x;
 }
 
@@ -354,25 +604,36 @@ static void telomere_help_msg(t_telomere *x) {
 static void *telomere_new(t_float tempo) {
     t_telomere *x = (t_telomere *)pd_new(telomere_class);
 
-    /* Pattern storage */
+    /* Derived pattern storage */
     x->pattern_alloc = 32;
-    x->pattern  = (t_float *)getbytes(x->pattern_alloc * sizeof(t_float));
-    x->velocity = (t_float *)getbytes(x->pattern_alloc * sizeof(t_float));
-    x->num_events = 0;
+    x->pattern     = (t_float *)getbytes(x->pattern_alloc * sizeof(t_float));
+    x->velocity    = (t_float *)getbytes(x->pattern_alloc * sizeof(t_float));
+    x->skip_weight = (t_float *)getbytes(x->pattern_alloc * sizeof(t_float));
+    x->num_events  = 0;
+
+    /* Source pattern storage */
+    x->source_alloc = 32;
+    x->source     = (t_float *)getbytes(x->source_alloc * sizeof(t_float));
+    x->source_vel = (t_float *)getbytes(x->source_alloc * sizeof(t_float));
+    x->source_count = 0;
+
+    /* Chain */
+    x->chain_len = 0;
+
     x->current_velocity = 1.0f;
 
     /* Euclidean */
     x->euclid_pattern = NULL;
-    x->euclid_len = 0;
+    x->euclid_len     = 0;
 
     /* Quantization */
     x->quantize_pct = 0.0f;
-    x->grid = TELOMERE_DEFAULT_GRID;
+    x->grid         = TELOMERE_DEFAULT_GRID;
 
     /* Clock */
-    x->tempo = (tempo > 0.0f) ? tempo : TELOMERE_DEFAULT_TEMPO;
-    x->beats_per_cycle = 4;
-    x->cycle_length_ms = (60000.0 / (double)x->tempo) * x->beats_per_cycle;
+    x->tempo            = (tempo > 0.0f) ? tempo : TELOMERE_DEFAULT_TEMPO;
+    x->beats_per_cycle  = 4;
+    x->cycle_length_ms  = (60000.0 / (double)x->tempo) * x->beats_per_cycle;
     x->cycle_start_time = 0.0;
 
     /* Metric modulation */
@@ -380,29 +641,29 @@ static void *telomere_new(t_float tempo) {
     x->metric_den = 1.0f;
 
     /* Playback */
-    x->recording = 0;
-    x->armed = 0;
-    x->playing = 0;
+    x->recording  = 0;
+    x->armed      = 0;
+    x->playing    = 0;
     x->play_index = 0;
+    x->loop       = 0;
+    x->sync_mode  = 0;
 
     /* Variation */
     x->jitter_amt = 0.0f;
-    x->skip_prob = 0.0f;
+    x->skip_prob  = 0.0f;
+    x->swing_amt  = 0.0f;
 
-    /* Outlets (left to right: bang, position, velocity, count, status) */
+    /* Outlets: bang, position, velocity, count, status */
     x->out_bang     = outlet_new(&x->x_obj, gensym("bang"));
     x->out_position = outlet_new(&x->x_obj, gensym("float"));
     x->out_velocity = outlet_new(&x->x_obj, gensym("float"));
     x->out_count    = outlet_new(&x->x_obj, gensym("float"));
     x->out_status   = outlet_new(&x->x_obj, gensym("float"));
 
-    /* Clock */
     x->playback_clock = clock_new(x, (t_method)telomere_tick);
 
-    /* Velocity inlet (right of main inlet) */
     floatinlet_new(&x->x_obj, &x->current_velocity);
 
-    /* Inlet */
     x->f_inlet = 0.0f;
 
     return x;
@@ -411,9 +672,15 @@ static void *telomere_new(t_float tempo) {
 static void telomere_free(t_telomere *x) {
     clock_free(x->playback_clock);
     if (x->pattern)
-        freebytes(x->pattern,  x->pattern_alloc * sizeof(t_float));
+        freebytes(x->pattern,     x->pattern_alloc * sizeof(t_float));
     if (x->velocity)
-        freebytes(x->velocity, x->pattern_alloc * sizeof(t_float));
+        freebytes(x->velocity,    x->pattern_alloc * sizeof(t_float));
+    if (x->skip_weight)
+        freebytes(x->skip_weight, x->pattern_alloc * sizeof(t_float));
+    if (x->source)
+        freebytes(x->source,      x->source_alloc * sizeof(t_float));
+    if (x->source_vel)
+        freebytes(x->source_vel,  x->source_alloc * sizeof(t_float));
     if (x->euclid_pattern)
         freebytes(x->euclid_pattern, x->euclid_len * sizeof(int));
 }
@@ -432,13 +699,20 @@ EXTERN void telomere_setup(void) {
         A_DEFFLOAT, 0
     );
 
-    class_addbang(telomere_class, (t_method)telomere_bang);
-    class_addfloat(telomere_class, (t_method)telomere_float);
+    class_addbang   (telomere_class, (t_method)telomere_bang);
+    class_addfloat  (telomere_class, (t_method)telomere_float);
     class_addanything(telomere_class, (t_method)telomere_anything);
 
-    /* Built-in messages */
     class_addmethod(telomere_class, (t_method)telomere_record,
                     gensym("record"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_stop,
+                    gensym("stop"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_play,
+                    gensym("play"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_loop,
+                    gensym("loop"), A_DEFFLOAT, 0);
+    class_addmethod(telomere_class, (t_method)telomere_sync,
+                    gensym("sync"), A_DEFFLOAT, 0);
     class_addmethod(telomere_class, (t_method)telomere_clear,
                     gensym("clear"), 0);
     class_addmethod(telomere_class, (t_method)telomere_quantize,
@@ -449,12 +723,12 @@ EXTERN void telomere_setup(void) {
                     gensym("jitter"), A_DEFFLOAT, 0);
     class_addmethod(telomere_class, (t_method)telomere_skip,
                     gensym("skip"), A_DEFFLOAT, 0);
+    class_addmethod(telomere_class, (t_method)telomere_skipweight,
+                    gensym("skipweight"), A_FLOAT, A_FLOAT, 0);
+    class_addmethod(telomere_class, (t_method)telomere_swing,
+                    gensym("swing"), A_DEFFLOAT, 0);
     class_addmethod(telomere_class, (t_method)telomere_beats,
                     gensym("beats"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_play,
-                    gensym("play"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_stop,
-                    gensym("stop"), 0);
     class_addmethod(telomere_class, (t_method)telomere_tempo,
                     gensym("tempo"), A_DEFFLOAT, 0);
     class_addmethod(telomere_class, (t_method)telomere_metric,
@@ -468,7 +742,16 @@ EXTERN void telomere_setup(void) {
     class_addmethod(telomere_class, (t_method)telomere_help_msg,
                     gensym("help"), 0);
 
-    /* Register built-in transforms */
+    /* Chain management — fixed-arg variants */
+    class_addmethod(telomere_class, (t_method)telomere_chain_remove,
+                    gensym("chain_remove"), A_DEFFLOAT, 0);
+    class_addmethod(telomere_class, (t_method)telomere_chain_clear,
+                    gensym("chain_clear"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_chain_bypass,
+                    gensym("chain_bypass"), A_FLOAT, A_FLOAT, 0);
+    class_addmethod(telomere_class, (t_method)telomere_chain_dump,
+                    gensym("chain_dump"), 0);
+
     telomere_transforms_builtins_setup();
 
     post("telomere: tap-pattern sequencer loaded");
