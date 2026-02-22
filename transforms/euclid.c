@@ -70,7 +70,7 @@ static void transform_euclid(t_telomere *x, int argc, t_atom *argv) {
 
     for (int i = 0; i < steps; i++) {
         if (rhythm[i]) {
-            pattern_append_event(x, step_size * (t_float)i);
+            pattern_append_event(x, step_size * (t_float)i, 1.0f);
         }
     }
 

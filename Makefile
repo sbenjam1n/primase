@@ -5,16 +5,12 @@
 #   make PD_PATH=/usr/include/pd   — specify Pd headers location
 #   make clean        — remove build artifacts
 #   make test         — compile-check with stub headers
+#   make test_unit    — build and run standalone unit tests
 
 # Detect platform
 UNAME := $(shell uname -s)
 ifeq ($(UNAME),Darwin)
   SUFFIX = pd_darwin
-  # -undefined dynamic_lookup defers symbol resolution to runtime so that
-  # Pd's own exports (class_addfloat, gensym, etc.) are resolved when Pd
-  # dlopens the bundle.  Pd uses RTLD_NOW, so the symbols must be
-  # resolvable from the process image at dlopen time — which they are,
-  # since Pd itself exports them.
   LDFLAGS = -bundle -undefined dynamic_lookup
 else
   SUFFIX = pd_linux
@@ -60,7 +56,27 @@ $(TARGET): $(ALL_OBJ)
 test:
 	$(MAKE) PD_PATH=pd all
 
-clean:
-	rm -f $(ALL_OBJ) $(TARGET) telomere.pd_linux telomere.pd_darwin
+# Unit test target: standalone runner, no Pd runtime needed
+TEST_SRC = tests/test_main.c \
+           tests/pd_stub.c \
+           telomere_pattern_api.c \
+           telomere_registry.c \
+           transforms/palindrome.c \
+           transforms/rotate.c \
+           transforms/reverse.c \
+           transforms/fast.c \
+           transforms/slow.c \
+           transforms/euclid.c \
+           transforms/jitter.c \
+           transforms/skip.c \
+           transforms/degrade.c \
+           transforms/builtins.c
 
-.PHONY: all clean test
+test_unit: $(TEST_SRC)
+	$(CC) -Wall -O2 -Ipd -I. -o tests/test_runner $(TEST_SRC) -lm
+	./tests/test_runner
+
+clean:
+	rm -f $(ALL_OBJ) $(TARGET) telomere.pd_linux telomere.pd_darwin tests/test_runner
+
+.PHONY: all clean test test_unit

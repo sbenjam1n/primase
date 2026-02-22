@@ -7,14 +7,40 @@
 #define TELOMERE_MAX_EVENTS   256
 #define TELOMERE_DEFAULT_GRID 16
 #define TELOMERE_DEFAULT_TEMPO 120.0f
+#define TELOMERE_MAX_CHAIN    16
+
+/* One entry in the non-destructive transform chain.
+ * argc/argv store the arguments so the chain can be re-evaluated from
+ * the frozen source pattern at any time. */
+typedef struct _chain_entry {
+    t_symbol *name;         /* transform name (e.g. "fast", "reverse")     */
+    int       argc;         /* number of stored float arguments (0–4)      */
+    t_float   argv[4];      /* argument values                             */
+    int       bypassed;     /* 1 = skip this entry during chain evaluation */
+} t_chain_entry;
 
 typedef struct _telomere {
     t_object  x_obj;
 
-    /* --- Pattern storage --- */
-    t_float  *pattern;          /* dynamically allocated event buffer      */
-    int       num_events;       /* current number of recorded events       */
+    /* --- Derived pattern (source + chain applied; read by playback) --- */
+    t_float  *pattern;          /* dynamically allocated position buffer   */
+    t_float  *velocity;         /* parallel velocity buffer (0.0–1.0)      */
+    t_float  *skip_weight;      /* per-event skip probability weight (0–1) */
+    int       num_events;       /* current number of derived events        */
     int       pattern_alloc;    /* allocated capacity                      */
+
+    /* --- Source pattern (frozen; never mutated by chain transforms) --- */
+    t_float  *source;           /* recorded/imported positions             */
+    t_float  *source_vel;       /* recorded/imported velocities            */
+    int       source_count;     /* number of source events                 */
+    int       source_alloc;     /* allocated capacity for source buffers   */
+
+    /* --- Transform chain --- */
+    t_chain_entry chain[TELOMERE_MAX_CHAIN];
+    int           chain_len;    /* number of active chain entries          */
+
+    /* --- Velocity input --- */
+    t_float   current_velocity; /* latched from velocity inlet, default 1.0 */
 
     /* --- Euclidean pattern --- */
     int      *euclid_pattern;   /* boolean hits for euclidean rhythm       */
@@ -34,20 +60,25 @@ typedef struct _telomere {
     t_float   metric_num;       /* numerator for metric modulation ratio   */
     t_float   metric_den;       /* denominator for metric modulation ratio */
 
-    /* --- Playback / recording --- */
-    int       recording;        /* 1 = recording taps, 0 = idle           */
-    int       armed;            /* 1 = armed for next cycle                */
+    /* --- Playback / recording state --- */
+    int       recording;        /* 1 = recording taps, 0 = idle            */
+    int       armed;            /* 1 = start recording at next cycle end   */
     int       playing;          /* 1 = playback clock is running           */
+    int       loop;             /* 1 = auto-restart at cycle end           */
+    int       sync_mode;        /* 1 = bang resets cycle phase (ext clock) */
 
     /* --- Variation parameters --- */
     t_float   jitter_amt;       /* random displacement amount (0.0–1.0)    */
-    t_float   skip_prob;        /* probability of skipping an event        */
+    t_float   skip_prob;        /* base probability of skipping an event   */
+    t_float   swing_amt;        /* position offset applied to odd-indexed
+                                 * events at output/scheduling time        */
 
     /* --- Outlets --- */
     t_outlet *out_bang;         /* fires a bang per event during playback  */
     t_outlet *out_position;     /* outputs event position as float         */
+    t_outlet *out_velocity;     /* outputs event velocity as float         */
     t_outlet *out_count;        /* outputs current event count             */
-    t_outlet *out_status;       /* outputs status messages                 */
+    t_outlet *out_status;       /* outputs status: 0=idle 1=rec 2=armed    */
 
     /* --- Clock object --- */
     t_clock  *playback_clock;   /* clock for scheduling playback events    */
