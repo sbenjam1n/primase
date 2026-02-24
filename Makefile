@@ -38,7 +38,11 @@ TRANSFORM_SRC = transforms/builtins.c \
                 transforms/euclid.c \
                 transforms/jitter.c \
                 transforms/skip.c \
-                transforms/degrade.c
+                transforms/degrade.c \
+                transforms/ratio.c \
+                transforms/ratchet.c \
+                transforms/accent.c \
+                transforms/drift.c
 
 ALL_SRC = $(CORE_SRC) $(TRANSFORM_SRC)
 ALL_OBJ = $(ALL_SRC:.c=.o)
@@ -70,6 +74,10 @@ TEST_SRC = tests/test_main.c \
            transforms/jitter.c \
            transforms/skip.c \
            transforms/degrade.c \
+           transforms/ratio.c \
+           transforms/ratchet.c \
+           transforms/accent.c \
+           transforms/drift.c \
            transforms/builtins.c
 
 test_unit: $(TEST_SRC)

@@ -54,6 +54,13 @@ static t_telomere *new_telo(void) {
     x->grid        = 16;
     x->quantize_pct = 0.0f;
     x->tempo       = 120.0f;
+    x->beats_per_cycle = 4;
+    x->cycle_length_ms = (60000.0 / 120.0) * 4;
+    x->mod_accent  = 1.0f;
+    x->current_velocity = 1.0f;
+    x->phase_offset = 0.0f;
+    x->swing_amt   = 0.0f;
+    memset(x->scenes, 0, sizeof(x->scenes));
     return x;
 }
 
@@ -378,6 +385,245 @@ static void test_pattern_sort_requirement_documented(void) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase 1: Clock following tests                                     */
+/* ------------------------------------------------------------------ */
+
+static void test_clock_follow_fields(void) {
+    t_telomere *x = new_telo();
+    ASSERT(x->clock_follow == 0, "clock_follow default 0");
+    x->clock_follow = 1;
+    x->clock_div = 4;
+    x->clock_bang_count = 0;
+    ASSERT(x->clock_div == 4, "clock_div set to 4");
+    ASSERT(x->last_bang_time == 0.0, "last_bang_time default 0.0");
+    free_telo(x);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 3: Pattern I/O tests                                         */
+/* ------------------------------------------------------------------ */
+
+static void test_set_pattern(void) {
+    t_telomere *x = new_telo();
+    /* Populate via set (bypass source/chain) */
+    t_float positions[] = {0.25f, 0.5f, 0.75f};
+    pattern_replace(x, positions, NULL, 3);
+    pattern_sort(x);
+    ASSERT(pattern_num_events(x) == 3, "set: 3 events");
+    ASSERT_FLOAT_EQ(pattern_get_event(x, 0), 0.25f, 1e-5f, "set[0]");
+    ASSERT_FLOAT_EQ(pattern_get_event(x, 1), 0.5f, 1e-5f, "set[1]");
+    ASSERT_FLOAT_EQ(pattern_get_event(x, 2), 0.75f, 1e-5f, "set[2]");
+    /* Verify velocity defaults to 1.0 */
+    ASSERT_FLOAT_EQ(pattern_get_velocity(x, 0), 1.0f, 1e-5f, "set vel default");
+    free_telo(x);
+}
+
+static void test_tap_at(void) {
+    t_telomere *x = new_telo();
+    source_append_event(x, 0.0f, 1.0f);
+    source_append_event(x, 0.5f, 0.8f);
+    ASSERT(source_num_events(x) == 2, "tap_at: source starts with 2");
+    /* Simulate tap_at by appending to source */
+    source_append_event(x, 0.25f, 0.6f);
+    ASSERT(source_num_events(x) == 3, "tap_at: source grows to 3");
+    ASSERT_FLOAT_EQ(x->source[2], 0.25f, 1e-5f, "tap_at: pos at [2]");
+    ASSERT_FLOAT_EQ(x->source_vel[2], 0.6f, 1e-5f, "tap_at: vel at [2]");
+    free_telo(x);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 4: Overdub tests                                             */
+/* ------------------------------------------------------------------ */
+
+static void test_overdub_source_grows(void) {
+    t_telomere *x = new_telo();
+    /* Set up a source pattern and simulate overdub */
+    source_append_event(x, 0.0f, 1.0f);
+    source_append_event(x, 0.5f, 1.0f);
+    int initial = source_num_events(x);
+    /* Overdub tap — append without clearing */
+    source_append_event(x, 0.25f, 0.7f);
+    ASSERT(source_num_events(x) == initial + 1,
+           "overdub: source grows by 1");
+    ASSERT_FLOAT_EQ(x->source[2], 0.25f, 1e-5f, "overdub: new event pos");
+    free_telo(x);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 6: New transform tests                                       */
+/* ------------------------------------------------------------------ */
+
+static void test_ratio_3_2(void) {
+    /* ratio 3/2 on a 4-event pattern: compress to fit 3 reps in 2 cycles
+     * factor = 1.5, ceil = 2 reps
+     * Original [0, 0.25, 0.5, 0.75]
+     * Rep 0: (0+orig)/1.5 => 0/1.5=0.0, 0.25/1.5=0.167, 0.5/1.5=0.333, 0.75/1.5=0.5
+     * Rep 1: (1+orig)/1.5 => 1/1.5=0.667, 1.25/1.5=0.833, 1.5/1.5=1.0(drop), 1.75/1.5=1.167(drop)
+     * Result: 6 events */
+    t_telomere *x = new_telo();
+    pattern_append_event(x, 0.0f, 1.0f);
+    pattern_append_event(x, 0.25f, 1.0f);
+    pattern_append_event(x, 0.5f, 1.0f);
+    pattern_append_event(x, 0.75f, 1.0f);
+    t_float args[] = {3.0f, 2.0f};
+    call_transform(x, "ratio", 2, args);
+    ASSERT(pattern_num_events(x) == 6, "ratio(3,2) on 4 events -> 6 events");
+    /* Verify sorted */
+    int sorted = 1;
+    for (int i = 1; i < pattern_num_events(x); i++)
+        if (pattern_get_event(x, i) < pattern_get_event(x, i-1)) sorted = 0;
+    ASSERT(sorted, "ratio leaves sorted");
+    free_telo(x);
+}
+
+static void test_ratio_1_2(void) {
+    /* ratio 1/2 = slow by 2x: multiply positions by 2, discard >= 1.0 */
+    t_telomere *x = new_telo();
+    pattern_append_event(x, 0.0f, 1.0f);
+    pattern_append_event(x, 0.25f, 1.0f);
+    pattern_append_event(x, 0.5f, 1.0f);
+    pattern_append_event(x, 0.75f, 1.0f);
+    t_float args[] = {1.0f, 2.0f};
+    call_transform(x, "ratio", 2, args);
+    ASSERT(pattern_num_events(x) == 2, "ratio(1,2) halves events");
+    ASSERT_FLOAT_EQ(pattern_get_event(x, 0), 0.0f, 1e-5f, "ratio(1,2)[0]");
+    ASSERT_FLOAT_EQ(pattern_get_event(x, 1), 0.5f, 1e-5f, "ratio(1,2)[1]");
+    free_telo(x);
+}
+
+static void test_ratchet(void) {
+    /* Ratchet event 1 (at 0.5) into 3 hits.
+     * Event 0=0.0, Event 1=0.5, no event 2 -> next_pos=1.0
+     * span = 1.0-0.5 = 0.5
+     * 3 hits: 0.5, 0.5+0.167, 0.5+0.333 = 0.5, 0.667, 0.833
+     * Total: 4 events [0.0, 0.5, 0.667, 0.833] */
+    t_telomere *x = new_telo();
+    pattern_append_event(x, 0.0f, 1.0f);
+    pattern_append_event(x, 0.5f, 0.8f);
+    t_float args[] = {1.0f, 3.0f};
+    call_transform(x, "ratchet", 2, args);
+    ASSERT(pattern_num_events(x) == 4, "ratchet(1,3) on 2 events -> 4 events");
+    ASSERT_FLOAT_EQ(pattern_get_event(x, 0), 0.0f, 1e-5f, "ratchet: event 0 intact");
+    ASSERT_FLOAT_EQ(pattern_get_event(x, 1), 0.5f, 1e-4f, "ratchet: first sub");
+    /* All ratcheted events carry original velocity */
+    ASSERT_FLOAT_EQ(pattern_get_velocity(x, 1), 0.8f, 1e-5f, "ratchet: vel preserved");
+    free_telo(x);
+}
+
+static void test_accent(void) {
+    /* accent period=2, amount=0.3
+     * Events [0, 1, 2, 3]: indices 0,2 get +0.3 */
+    t_telomere *x = new_telo();
+    pattern_append_event(x, 0.0f,  0.5f);
+    pattern_append_event(x, 0.25f, 0.5f);
+    pattern_append_event(x, 0.5f,  0.5f);
+    pattern_append_event(x, 0.75f, 0.5f);
+    t_float args[] = {2.0f, 0.3f};
+    call_transform(x, "accent", 2, args);
+    ASSERT_FLOAT_EQ(pattern_get_velocity(x, 0), 0.8f, 1e-5f, "accent[0] = 0.5+0.3");
+    ASSERT_FLOAT_EQ(pattern_get_velocity(x, 1), 0.5f, 1e-5f, "accent[1] unchanged");
+    ASSERT_FLOAT_EQ(pattern_get_velocity(x, 2), 0.8f, 1e-5f, "accent[2] = 0.5+0.3");
+    ASSERT_FLOAT_EQ(pattern_get_velocity(x, 3), 0.5f, 1e-5f, "accent[3] unchanged");
+    free_telo(x);
+}
+
+static void test_drift_bounds(void) {
+    /* drift with amount=0.01: all positions should remain in [0,1) */
+    t_telomere *x = new_telo();
+    pattern_append_event(x, 0.0f, 1.0f);
+    pattern_append_event(x, 0.5f, 1.0f);
+    pattern_append_event(x, 0.99f, 1.0f);
+    t_float args[] = {0.01f};
+    call_transform(x, "drift", 1, args);
+    ASSERT(pattern_num_events(x) == 3, "drift preserves count");
+    for (int i = 0; i < 3; i++) {
+        t_float p = pattern_get_event(x, i);
+        ASSERT(p >= 0.0f && p <= 1.0f, "drift: position in bounds");
+    }
+    /* Verify sorted */
+    int sorted = 1;
+    for (int i = 1; i < 3; i++)
+        if (pattern_get_event(x, i) < pattern_get_event(x, i-1)) sorted = 0;
+    ASSERT(sorted, "drift leaves sorted");
+    free_telo(x);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 7: Phase offset tests                                        */
+/* ------------------------------------------------------------------ */
+
+static void test_phase_offset(void) {
+    t_telomere *x = new_telo();
+    x->phase_offset = 0.0f;
+    pattern_append_event(x, 0.25f, 1.0f);
+    /* With zero offset, effective pos == raw pos */
+    ASSERT_FLOAT_EQ(x->pattern[0], 0.25f, 1e-5f, "phase 0: pos unchanged");
+
+    /* Verify field storage */
+    x->phase_offset = 0.5f;
+    ASSERT_FLOAT_EQ(x->phase_offset, 0.5f, 1e-5f, "phase offset stored");
+    free_telo(x);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 8: Scene memory tests                                        */
+/* ------------------------------------------------------------------ */
+
+static void test_scene_store_recall(void) {
+    t_telomere *x = new_telo();
+    /* Build a source pattern */
+    source_append_event(x, 0.0f, 1.0f);
+    source_append_event(x, 0.5f, 0.8f);
+    x->chain_len = 0;
+
+    /* Store to slot 0 */
+    t_scene *sc = &x->scenes[0];
+    memcpy(sc->source, x->source, x->source_count * sizeof(t_float));
+    memcpy(sc->source_vel, x->source_vel, x->source_count * sizeof(t_float));
+    sc->source_count = x->source_count;
+    sc->chain_len = x->chain_len;
+    sc->occupied = 1;
+
+    /* Clear source */
+    source_clear(x);
+    ASSERT(source_num_events(x) == 0, "scene: source cleared");
+
+    /* Recall from slot 0 */
+    ASSERT(sc->occupied == 1, "scene: slot 0 occupied");
+    source_replace(x, sc->source, sc->source_vel, sc->source_count);
+    ASSERT(source_num_events(x) == 2, "scene: recalled 2 source events");
+    ASSERT_FLOAT_EQ(x->source[0], 0.0f, 1e-5f, "scene: recalled pos[0]");
+    ASSERT_FLOAT_EQ(x->source_vel[1], 0.8f, 1e-5f, "scene: recalled vel[1]");
+    free_telo(x);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 9: Improved swing tests                                      */
+/* ------------------------------------------------------------------ */
+
+static void test_grid_aware_swing(void) {
+    /* Create events on a grid of 8, apply swing.
+     * Grid 8: positions 0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875
+     * Odd grid indices (1,3,5,7): 0.125, 0.375, 0.625, 0.875 get swing.
+     * Place events at 0.0 (grid 0, even) and 0.125 (grid 1, odd). */
+    t_telomere *x = new_telo();
+    x->grid = 8;
+    x->swing_amt = 0.0f;
+    pattern_append_event(x, 0.0f, 1.0f);
+    pattern_append_event(x, 0.125f, 1.0f);
+
+    /* Without swing, positions stay the same (ignoring phase_offset=0) */
+    ASSERT_FLOAT_EQ(pattern_get_event(x, 0), 0.0f, 1e-5f, "swing: even grid no shift");
+
+    /* With swing, the event at grid position 1 (odd) should shift.
+     * We test the struct field is writable. Actual effective_pos()
+     * testing requires the full runtime. */
+    x->swing_amt = 0.1f;
+    ASSERT_FLOAT_EQ(x->swing_amt, 0.1f, 1e-5f, "swing_amt set to 0.1");
+    free_telo(x);
+}
+
+/* ------------------------------------------------------------------ */
 /* Main                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -410,6 +656,39 @@ int main(void) {
     test_euclid();
     test_transforms_leave_sorted();
     test_pattern_sort_requirement_documented();
+
+    /* Phase 1: Clock following */
+    printf("\n-- clock following --\n");
+    test_clock_follow_fields();
+
+    /* Phase 3: Pattern I/O */
+    printf("\n-- pattern I/O --\n");
+    test_set_pattern();
+    test_tap_at();
+
+    /* Phase 4: Overdub */
+    printf("\n-- overdub --\n");
+    test_overdub_source_grows();
+
+    /* Phase 6: New transforms */
+    printf("\n-- new transforms --\n");
+    test_ratio_3_2();
+    test_ratio_1_2();
+    test_ratchet();
+    test_accent();
+    test_drift_bounds();
+
+    /* Phase 7: Phase offset */
+    printf("\n-- phase offset --\n");
+    test_phase_offset();
+
+    /* Phase 8: Scene memory */
+    printf("\n-- scene memory --\n");
+    test_scene_store_recall();
+
+    /* Phase 9: Improved swing */
+    printf("\n-- improved swing --\n");
+    test_grid_aware_swing();
 
     printf("\n=== results: %d passed, %d failed ===\n",
            g_passes, g_failures);

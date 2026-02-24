@@ -10,6 +10,10 @@ extern void euclid_register(void);
 extern void jitter_register(void);
 extern void skip_register(void);
 extern void degrade_register(void);
+extern void ratio_register(void);
+extern void ratchet_register(void);
+extern void accent_register(void);
+extern void drift_register(void);
 
 void telomere_transforms_builtins_setup(void) {
     palindrome_register();
@@ -21,4 +25,8 @@ void telomere_transforms_builtins_setup(void) {
     jitter_register();
     skip_register();
     degrade_register();
+    ratio_register();
+    ratchet_register();
+    accent_register();
+    drift_register();
 }

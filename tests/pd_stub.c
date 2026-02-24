@@ -73,3 +73,15 @@ void pd_error(void *obj, const char *fmt, ...) {
     va_end(ap);
     fputc('\n', stderr);
 }
+
+/* ---- Outlet stubs ---- */
+
+void outlet_bang(t_outlet *o) { (void)o; }
+void outlet_float(t_outlet *o, t_float f) { (void)o; (void)f; }
+void outlet_symbol(t_outlet *o, t_symbol *s) { (void)o; (void)s; }
+void outlet_list(t_outlet *o, t_symbol *s, int argc, t_atom *argv) {
+    (void)o; (void)s; (void)argc; (void)argv;
+}
+void outlet_anything(t_outlet *o, t_symbol *s, int argc, t_atom *argv) {
+    (void)o; (void)s; (void)argc; (void)argv;
+}

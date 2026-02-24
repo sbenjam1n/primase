@@ -32,17 +32,29 @@ t_class *telomere_class;
 /* ------------------------------------------------------------------ */
 
 static void telomere_chain_eval(t_telomere *x);
+static void telomere_set(t_telomere *x, t_symbol *s, int argc, t_atom *argv);
+static void telomere_set_source(t_telomere *x, t_symbol *s, int argc, t_atom *argv);
 
 /* ------------------------------------------------------------------ */
 /* Helper: compute swing-adjusted effective position for event i      */
 /* ------------------------------------------------------------------ */
 
 static double effective_pos(t_telomere *x, int index) {
+    if (index < 0 || index >= x->num_events) return 0.0;
     double p = (double)x->pattern[index];
-    if (x->swing_amt != 0.0f && (index % 2 == 1)) {
-        p += (double)x->swing_amt;
-        while (p >= 1.0) p -= 1.0;
-        while (p <  0.0) p += 1.0;
+    /* Phase 7: apply phase offset */
+    p += (double)x->phase_offset;
+    while (p >= 1.0) p -= 1.0;
+    while (p <  0.0) p += 1.0;
+    /* Phase 9: grid-aware swing */
+    if (x->swing_amt != 0.0f && x->grid > 0) {
+        double step = 1.0 / (double)x->grid;
+        int nearest_grid = (int)(p / step + 0.5);
+        if (nearest_grid % 2 == 1) {
+            p += (double)x->swing_amt;
+            while (p >= 1.0) p -= 1.0;
+            while (p <  0.0) p += 1.0;
+        }
     }
     return p;
 }
@@ -69,6 +81,11 @@ static void telomere_tick(t_telomere *x) {
         }
 
         if (x->loop) {
+            if (x->num_events == 0) {
+                x->playing = 0;
+                x->play_index = 0;
+                return;
+            }
             x->play_index = 0;
             x->cycle_start_time = clock_getlogicaltime();
             double delay = effective_pos(x, 0) * x->cycle_length_ms;
@@ -76,14 +93,33 @@ static void telomere_tick(t_telomere *x) {
             clock_delay(x->playback_clock, delay);
         } else {
             x->playing = 0;
+            x->play_index = 0;
         }
         return;
     }
 
     double eff_pos = effective_pos(x, x->play_index);
 
+    /* Phase 5: clamp modulation inputs */
+    t_float accent = x->mod_accent;
+    if (accent < 0.0f) accent = 0.0f;
+    if (accent > 2.0f) accent = 2.0f;
+
+    t_float jitter = x->jitter_amt;
+    if (jitter < 0.0f) jitter = 0.0f;
+    if (jitter > 1.0f) jitter = 1.0f;
+
+    t_float skip_p = x->skip_prob;
+    if (skip_p < 0.0f) skip_p = 0.0f;
+    if (skip_p > 1.0f) skip_p = 1.0f;
+
+    t_float swing = x->swing_amt;
+    if (swing < -0.5f) swing = -0.5f;
+    if (swing > 0.5f) swing = 0.5f;
+    x->swing_amt = swing; /* write back clamped value for effective_pos */
+
     /* Apply per-event skip probability */
-    t_float effective_skip = x->skip_prob * x->skip_weight[x->play_index];
+    t_float effective_skip = skip_p * x->skip_weight[x->play_index];
     if (effective_skip > 0.0f) {
         float r = (float)rand() / (float)RAND_MAX;
         if (r < effective_skip) {
@@ -98,6 +134,8 @@ static void telomere_tick(t_telomere *x) {
                 if (remaining < 0.1) remaining = 0.1;
                 clock_delay(x->playback_clock, remaining);
             } else {
+                x->playing = 0;
+                x->play_index = 0;
                 outlet_float(x->out_count, (t_float)x->num_events);
             }
             return;
@@ -106,15 +144,17 @@ static void telomere_tick(t_telomere *x) {
 
     /* Apply jitter to output position only (not scheduling) */
     t_float out_pos = (t_float)eff_pos;
-    if (x->jitter_amt > 0.0f) {
+    if (jitter > 0.0f) {
         float r = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
-        out_pos += r * x->jitter_amt;
+        out_pos += r * jitter;
         while (out_pos >= 1.0f) out_pos -= 1.0f;
         while (out_pos <  0.0f) out_pos += 1.0f;
     }
 
-    /* Output event */
-    outlet_float(x->out_velocity, pattern_get_velocity(x, x->play_index));
+    /* Output event — apply accent to velocity */
+    t_float vel = pattern_get_velocity(x, x->play_index) * accent;
+    if (vel > 1.0f) vel = 1.0f;
+    outlet_float(x->out_velocity, vel);
     outlet_float(x->out_position, out_pos);
     outlet_bang(x->out_bang);
 
@@ -132,6 +172,8 @@ static void telomere_tick(t_telomere *x) {
             if (remaining < 0.1) remaining = 0.1;
             clock_delay(x->playback_clock, remaining);
         } else {
+            x->playing = 0;
+            x->play_index = 0;
             outlet_float(x->out_count, (t_float)x->num_events);
         }
     }
@@ -142,6 +184,35 @@ static void telomere_tick(t_telomere *x) {
 /* ------------------------------------------------------------------ */
 
 static void telomere_bang(t_telomere *x) {
+    /* Phase 4: Overdub — append tap to source during playback */
+    if (x->overdub && x->playing) {
+        double elapsed = clock_gettimesince(x->cycle_start_time);
+        t_float pos = (t_float)(elapsed / x->cycle_length_ms);
+        while (pos >= 1.0f) pos -= 1.0f;
+        if (pos < 0.0f) pos = 0.0f;
+
+        if (x->quantize_pct > 0.0f && x->grid > 0) {
+            t_float step    = 1.0f / (t_float)x->grid;
+            t_float nearest = roundf(pos / step) * step;
+            pos = pos + (nearest - pos) * x->quantize_pct;
+            if (pos >= 1.0f) pos -= 1.0f;
+        }
+
+        t_float vel = x->current_velocity;
+
+        /* Phase 4: Transparent — pass through taps to outlets */
+        if (x->transparent) {
+            outlet_float(x->out_velocity, vel);
+            outlet_float(x->out_position, pos);
+            outlet_bang(x->out_bang);
+        }
+
+        source_append_event(x, pos, vel);
+        telomere_chain_eval(x);
+        outlet_float(x->out_count, (t_float)x->num_events);
+        return;
+    }
+
     if (x->recording) {
         double elapsed = clock_gettimesince(x->cycle_start_time);
         t_float pos = (t_float)(elapsed / x->cycle_length_ms);
@@ -156,14 +227,61 @@ static void telomere_bang(t_telomere *x) {
             if (pos >= 1.0f) pos -= 1.0f;
         }
 
-        source_append_event(x, pos, x->current_velocity);
+        t_float vel = x->current_velocity;
+
+        /* Phase 4: Transparent — pass through taps to outlets */
+        if (x->transparent) {
+            outlet_float(x->out_velocity, vel);
+            outlet_float(x->out_position, pos);
+            outlet_bang(x->out_bang);
+        }
+
+        source_append_event(x, pos, vel);
         telomere_chain_eval(x);
         outlet_float(x->out_count, (t_float)x->num_events);
         return;
     }
 
+    /* Phase 1: Clock following — derive tempo from bang intervals */
+    if (x->clock_follow && x->playing) {
+        double now = clock_getlogicaltime();
+        if (x->last_bang_time > 0.0) {
+            double interval_units = now - x->last_bang_time;
+            double interval_ms = interval_units / 14112.0;
+            if (interval_ms > 0.0) {
+                x->tempo = (t_float)(60000.0 / (interval_ms * x->clock_div));
+                x->cycle_length_ms = (60000.0 / (double)x->tempo) * x->beats_per_cycle;
+            }
+        }
+        x->last_bang_time = now;
+        x->clock_bang_count++;
+        if (x->clock_bang_count >= x->clock_div) {
+            /* Reset cycle at clock_div boundary */
+            x->clock_bang_count = 0;
+            if (x->num_events == 0) {
+                clock_unset(x->playback_clock);
+                x->playing = 0;
+                x->play_index = 0;
+                return;
+            }
+            clock_unset(x->playback_clock);
+            x->play_index = 0;
+            x->cycle_start_time = clock_getlogicaltime();
+            double delay = effective_pos(x, 0) * x->cycle_length_ms;
+            if (delay < 0.1) delay = 0.1;
+            clock_delay(x->playback_clock, delay);
+        }
+        return;
+    }
+
     if (x->sync_mode && x->playing) {
         /* External sync: reset cycle phase to now */
+        if (x->num_events == 0) {
+            clock_unset(x->playback_clock);
+            x->playing = 0;
+            x->play_index = 0;
+            return;
+        }
         clock_unset(x->playback_clock);
         x->play_index = 0;
         x->cycle_start_time = clock_getlogicaltime();
@@ -342,6 +460,8 @@ static void telomere_anything(t_telomere *x, t_symbol *s, int argc, t_atom *argv
 
     if (strcmp(n, "chain_add")     == 0) { do_chain_add(x, argc, argv);     return; }
     if (strcmp(n, "chain_replace") == 0) { do_chain_replace(x, argc, argv); return; }
+    if (strcmp(n, "set")           == 0) { telomere_set(x, s, argc, argv);  return; }
+    if (strcmp(n, "set_source")    == 0) { telomere_set_source(x, s, argc, argv); return; }
 
     t_transform_entry *entry = telomere_lookup_transform(s);
     if (!entry) {
@@ -542,6 +662,7 @@ static void telomere_metric(t_telomere *x, t_float num, t_float den) {
 
 static void telomere_stop(t_telomere *x) {
     x->armed = 0;
+    x->overdub = 0;
     if (x->recording) {
         x->recording = 0;
         outlet_float(x->out_status, 0.0f);
@@ -598,6 +719,207 @@ static void telomere_help_msg(t_telomere *x) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase 1: Clock following messages                                  */
+/* ------------------------------------------------------------------ */
+
+static void telomere_clockfollow(t_telomere *x, t_float f) {
+    x->clock_follow = (f != 0.0f) ? 1 : 0;
+    if (x->clock_follow) {
+        x->last_bang_time = 0.0;
+        x->clock_bang_count = 0;
+    }
+}
+
+static void telomere_clockdiv(t_telomere *x, t_float f) {
+    int d = (int)f;
+    if (d < 1) d = 1;
+    x->clock_div = d;
+    x->clock_bang_count = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 2: State output query handlers                               */
+/* ------------------------------------------------------------------ */
+
+static void telomere_getpattern(t_telomere *x) {
+    t_atom argv[TELOMERE_MAX_EVENTS];
+    for (int i = 0; i < x->num_events; i++)
+        SETFLOAT(&argv[i], x->pattern[i]);
+    outlet_anything(x->out_state, gensym("pattern"), x->num_events, argv);
+}
+
+static void telomere_getvelocity(t_telomere *x) {
+    t_atom argv[TELOMERE_MAX_EVENTS];
+    for (int i = 0; i < x->num_events; i++)
+        SETFLOAT(&argv[i], x->velocity[i]);
+    outlet_anything(x->out_state, gensym("velocity"), x->num_events, argv);
+}
+
+static void telomere_getsource(t_telomere *x) {
+    t_atom argv[TELOMERE_MAX_EVENTS];
+    for (int i = 0; i < x->source_count; i++)
+        SETFLOAT(&argv[i], x->source[i]);
+    outlet_anything(x->out_state, gensym("source"), x->source_count, argv);
+}
+
+static void telomere_getparams(t_telomere *x) {
+    t_atom a[1];
+    SETFLOAT(&a[0], (t_float)x->playing);
+    outlet_anything(x->out_state, gensym("playing"), 1, a);
+    SETFLOAT(&a[0], (t_float)x->recording);
+    outlet_anything(x->out_state, gensym("recording"), 1, a);
+    SETFLOAT(&a[0], x->tempo);
+    outlet_anything(x->out_state, gensym("tempo"), 1, a);
+    SETFLOAT(&a[0], (t_float)x->loop);
+    outlet_anything(x->out_state, gensym("loop"), 1, a);
+    SETFLOAT(&a[0], (t_float)x->num_events);
+    outlet_anything(x->out_state, gensym("num_events"), 1, a);
+    SETFLOAT(&a[0], (t_float)x->cycle_length_ms);
+    outlet_anything(x->out_state, gensym("cycle_length_ms"), 1, a);
+    SETFLOAT(&a[0], x->jitter_amt);
+    outlet_anything(x->out_state, gensym("jitter"), 1, a);
+    SETFLOAT(&a[0], x->skip_prob);
+    outlet_anything(x->out_state, gensym("skip"), 1, a);
+    SETFLOAT(&a[0], x->swing_amt);
+    outlet_anything(x->out_state, gensym("swing"), 1, a);
+    SETFLOAT(&a[0], (t_float)x->grid);
+    outlet_anything(x->out_state, gensym("grid"), 1, a);
+    SETFLOAT(&a[0], x->quantize_pct);
+    outlet_anything(x->out_state, gensym("quantize"), 1, a);
+    SETFLOAT(&a[0], (t_float)x->beats_per_cycle);
+    outlet_anything(x->out_state, gensym("beats"), 1, a);
+    SETFLOAT(&a[0], (t_float)x->clock_follow);
+    outlet_anything(x->out_state, gensym("clockfollow"), 1, a);
+}
+
+static void telomere_getchain(t_telomere *x) {
+    for (int i = 0; i < x->chain_len; i++) {
+        t_atom argv[6]; /* index + name + up to 4 args */
+        int ac = 0;
+        SETFLOAT(&argv[ac++], (t_float)i);
+        SETSYMBOL(&argv[ac++], x->chain[i].name);
+        for (int j = 0; j < x->chain[i].argc; j++)
+            SETFLOAT(&argv[ac++], x->chain[i].argv[j]);
+        outlet_anything(x->out_state, gensym("chain"), ac, argv);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 3: Pattern I/O                                               */
+/* ------------------------------------------------------------------ */
+
+static void telomere_set(t_telomere *x, t_symbol *s, int argc, t_atom *argv) {
+    (void)s;
+    if (argc == 0) return;
+    if (argc > TELOMERE_MAX_EVENTS) argc = TELOMERE_MAX_EVENTS;
+    t_float pos[TELOMERE_MAX_EVENTS];
+    for (int i = 0; i < argc; i++)
+        pos[i] = atom_getfloatarg(i, argc, argv);
+    pattern_replace(x, pos, NULL, argc);
+    pattern_sort(x);
+    outlet_float(x->out_count, (t_float)x->num_events);
+}
+
+static void telomere_set_source(t_telomere *x, t_symbol *s, int argc, t_atom *argv) {
+    (void)s;
+    if (argc == 0) return;
+    if (argc > TELOMERE_MAX_EVENTS) argc = TELOMERE_MAX_EVENTS;
+    t_float pos[TELOMERE_MAX_EVENTS];
+    for (int i = 0; i < argc; i++)
+        pos[i] = atom_getfloatarg(i, argc, argv);
+    source_replace(x, pos, NULL, argc);
+    telomere_chain_eval(x);
+    outlet_float(x->out_count, (t_float)x->num_events);
+}
+
+static void telomere_tap_at(t_telomere *x, t_float pos, t_float vel) {
+    if (vel == 0.0f) vel = x->current_velocity;
+    source_append_event(x, pos, vel);
+    telomere_chain_eval(x);
+    outlet_float(x->out_count, (t_float)x->num_events);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 4: Overdub + Transparent                                     */
+/* ------------------------------------------------------------------ */
+
+static void telomere_overdub(t_telomere *x) {
+    if (!x->playing) {
+        pd_error(x, "telomere: overdub requires active playback");
+        return;
+    }
+    x->overdub = 1;
+    x->recording = 0;  /* mutually exclusive with record */
+    outlet_float(x->out_status, 3.0f);  /* 3 = overdub */
+}
+
+static void telomere_transparent(t_telomere *x, t_float f) {
+    x->transparent = (f != 0.0f) ? 1 : 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 7: Phase offset                                              */
+/* ------------------------------------------------------------------ */
+
+static void telomere_phase(t_telomere *x, t_float f) {
+    if (f < 0.0f) f = 0.0f;
+    if (f > 1.0f) f = 1.0f;
+    x->phase_offset = f;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 8: Scene memory                                              */
+/* ------------------------------------------------------------------ */
+
+static void telomere_store(t_telomere *x, t_float fslot) {
+    int slot = (int)fslot;
+    if (slot < 0 || slot >= TELOMERE_MAX_SCENES) {
+        pd_error(x, "telomere: store: slot %d out of range (0-%d)",
+                 slot, TELOMERE_MAX_SCENES - 1);
+        return;
+    }
+    t_scene *sc = &x->scenes[slot];
+    memcpy(sc->source, x->source, x->source_count * sizeof(t_float));
+    memcpy(sc->source_vel, x->source_vel, x->source_count * sizeof(t_float));
+    sc->source_count = x->source_count;
+    memcpy(sc->chain, x->chain, x->chain_len * sizeof(t_chain_entry));
+    sc->chain_len = x->chain_len;
+    sc->occupied = 1;
+    post("telomere: stored to scene %d (%d events, %d chain entries)",
+         slot, sc->source_count, sc->chain_len);
+}
+
+static void telomere_recall(t_telomere *x, t_float fslot) {
+    int slot = (int)fslot;
+    if (slot < 0 || slot >= TELOMERE_MAX_SCENES) {
+        pd_error(x, "telomere: recall: slot %d out of range (0-%d)",
+                 slot, TELOMERE_MAX_SCENES - 1);
+        return;
+    }
+    t_scene *sc = &x->scenes[slot];
+    if (!sc->occupied) {
+        pd_error(x, "telomere: recall: scene %d is empty", slot);
+        return;
+    }
+    source_replace(x, sc->source, sc->source_vel, sc->source_count);
+    memcpy(x->chain, sc->chain, sc->chain_len * sizeof(t_chain_entry));
+    x->chain_len = sc->chain_len;
+    telomere_chain_eval(x);
+
+    if (x->playing && x->num_events > 0) {
+        x->play_index = 0;
+        x->cycle_start_time = clock_getlogicaltime();
+        double delay = effective_pos(x, 0) * x->cycle_length_ms;
+        if (delay < 0.1) delay = 0.1;
+        clock_unset(x->playback_clock);
+        clock_delay(x->playback_clock, delay);
+    }
+    outlet_float(x->out_count, (t_float)x->num_events);
+    post("telomere: recalled scene %d (%d events, %d chain entries)",
+         slot, x->source_count, x->chain_len);
+}
+
+/* ------------------------------------------------------------------ */
 /* Constructor / Destructor                                           */
 /* ------------------------------------------------------------------ */
 
@@ -640,6 +962,12 @@ static void *telomere_new(t_float tempo) {
     x->metric_num = 1.0f;
     x->metric_den = 1.0f;
 
+    /* Clock following */
+    x->clock_follow     = 0;
+    x->last_bang_time   = 0.0;
+    x->clock_div        = 1;
+    x->clock_bang_count = 0;
+
     /* Playback */
     x->recording  = 0;
     x->armed      = 0;
@@ -648,21 +976,44 @@ static void *telomere_new(t_float tempo) {
     x->loop       = 0;
     x->sync_mode  = 0;
 
+    /* Overdub / transparent */
+    x->overdub     = 0;
+    x->transparent = 0;
+
     /* Variation */
     x->jitter_amt = 0.0f;
     x->skip_prob  = 0.0f;
     x->swing_amt  = 0.0f;
 
-    /* Outlets: bang, position, velocity, count, status */
+    /* Modulation */
+    x->mod_accent = 1.0f;
+
+    /* Phase offset */
+    x->phase_offset = 0.0f;
+
+    /* Scene memory */
+    memset(x->scenes, 0, sizeof(x->scenes));
+
+    /* Outlets: bang, position, velocity, count, status, state */
     x->out_bang     = outlet_new(&x->x_obj, gensym("bang"));
     x->out_position = outlet_new(&x->x_obj, gensym("float"));
     x->out_velocity = outlet_new(&x->x_obj, gensym("float"));
     x->out_count    = outlet_new(&x->x_obj, gensym("float"));
     x->out_status   = outlet_new(&x->x_obj, gensym("float"));
+    x->out_state    = outlet_new(&x->x_obj, &s_list);
 
     x->playback_clock = clock_new(x, (t_method)telomere_tick);
 
+    /* Inlet 2: velocity (existing) */
     floatinlet_new(&x->x_obj, &x->current_velocity);
+    /* Inlet 3: accent modulation */
+    floatinlet_new(&x->x_obj, &x->mod_accent);
+    /* Inlet 4: jitter amount */
+    floatinlet_new(&x->x_obj, &x->jitter_amt);
+    /* Inlet 5: skip probability */
+    floatinlet_new(&x->x_obj, &x->skip_prob);
+    /* Inlet 6: swing amount */
+    floatinlet_new(&x->x_obj, &x->swing_amt);
 
     x->f_inlet = 0.0f;
 
@@ -741,6 +1092,44 @@ EXTERN void telomere_setup(void) {
                     gensym("read"), A_SYMBOL, 0);
     class_addmethod(telomere_class, (t_method)telomere_help_msg,
                     gensym("help"), 0);
+
+    /* Phase 1: Clock following */
+    class_addmethod(telomere_class, (t_method)telomere_clockfollow,
+                    gensym("clockfollow"), A_DEFFLOAT, 0);
+    class_addmethod(telomere_class, (t_method)telomere_clockdiv,
+                    gensym("clockdiv"), A_DEFFLOAT, 0);
+
+    /* Phase 2: State output */
+    class_addmethod(telomere_class, (t_method)telomere_getpattern,
+                    gensym("getpattern"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_getvelocity,
+                    gensym("getvelocity"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_getsource,
+                    gensym("getsource"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_getparams,
+                    gensym("getparams"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_getchain,
+                    gensym("getchain"), 0);
+
+    /* Phase 3: Pattern I/O (set/set_source via anything; tap_at here) */
+    class_addmethod(telomere_class, (t_method)telomere_tap_at,
+                    gensym("tap_at"), A_FLOAT, A_DEFFLOAT, 0);
+
+    /* Phase 4: Overdub + transparent */
+    class_addmethod(telomere_class, (t_method)telomere_overdub,
+                    gensym("overdub"), 0);
+    class_addmethod(telomere_class, (t_method)telomere_transparent,
+                    gensym("transparent"), A_DEFFLOAT, 0);
+
+    /* Phase 7: Phase offset */
+    class_addmethod(telomere_class, (t_method)telomere_phase,
+                    gensym("phase"), A_DEFFLOAT, 0);
+
+    /* Phase 8: Scene memory */
+    class_addmethod(telomere_class, (t_method)telomere_store,
+                    gensym("store"), A_DEFFLOAT, 0);
+    class_addmethod(telomere_class, (t_method)telomere_recall,
+                    gensym("recall"), A_DEFFLOAT, 0);
 
     /* Chain management — fixed-arg variants */
     class_addmethod(telomere_class, (t_method)telomere_chain_remove,

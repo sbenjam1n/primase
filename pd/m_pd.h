@@ -136,6 +136,7 @@ EXTERN void outlet_bang(t_outlet *o);
 EXTERN void outlet_float(t_outlet *o, t_float f);
 EXTERN void outlet_symbol(t_outlet *o, t_symbol *s);
 EXTERN void outlet_list(t_outlet *o, t_symbol *s, int argc, t_atom *argv);
+EXTERN void outlet_anything(t_outlet *o, t_symbol *s, int argc, t_atom *argv);
 
 /* inlets */
 typedef struct _inlet t_inlet;
