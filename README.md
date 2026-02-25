@@ -1,10 +1,10 @@
 # telomere
 
-Like its namesake — the repetitive sequence capping each chromosome, ensuring faithful replication cycle after cycle while gradually introducing variation — telomere is a Pure Data external that captures rhythmic patterns and replays them through non-destructive transform chains, preserving the source recording intact while layering controlled mutation with every pass.
+telomere~ is a pattern replicator and cyclic mutation external for Pure Data. 
 
 ## Features
 
-- **Tap-input recording** — capture rhythms in real-time as normalized positions (0.0–1.0) within a cycle
+- **Tap-input / bang recording** — capture rhythms in real-time as normalized positions (0.0–1.0) within a cycle
 - **Variable quantization** — continuously adjustable snap strength (0–100%) against a configurable grid
 - **Non-destructive transform chain** — apply ordered transforms that stay editable live; the original recording is never mutated
 - **Euclidean rhythms** — generate Bjorklund-distributed patterns (k hits in N steps)
@@ -222,7 +222,7 @@ Makefile                    Platform-aware build system
 
 ## Design notes
 
-All timing data uses **normalized 0.0–1.0 positions** within a cycle, decoupling patterns from tempo and time signature. The transform system follows the Open/Closed Principle: a registry maps message names to transform functions so the core dispatcher never needs modification when transforms are added. Transforms access pattern data exclusively through a narrow API (`telomere_pattern_api.h`), insulating them from internal struct changes.
+All timing data uses **normalized 0.0–1.0 positions** within a cycle, decoupling patterns from tempo and time signature. The transform system registry maps message names to transform functions so the core dispatcher never needs modification when transforms are added. Transforms access pattern data exclusively through a narrow API (`telomere_pattern_api.h`), insulating them from internal struct changes.
 
 The **source/derived split** separates what was recorded from what plays back. `source[]` is written only by recording and `read`; `pattern[]` is written only by `telomere_chain_eval()`. Every chain operation re-derives `pattern[]` from scratch, so any combination of transforms can be undone by removing chain entries — the recording is always intact.
 
