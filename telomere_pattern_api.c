@@ -113,10 +113,13 @@ void pattern_resize(t_telomere *x, int new_size) {
         }
     }
     x->num_events = new_size;
+    if (x->playing && new_size > 0 && x->play_index >= new_size)
+        x->play_index = 0;
 }
 
 void pattern_clear(t_telomere *x) {
     x->num_events = 0;
+    x->play_index = 0;
 }
 
 /* Insertion sort — carries velocity and skip_weight alongside position */
@@ -158,6 +161,8 @@ void pattern_replace(t_telomere *x, t_float *new_pos, t_float *new_vel, int coun
     /* Reset skip_weight to 1.0 for all events (fresh derived state) */
     for (int i = 0; i < count; i++) x->skip_weight[i] = 1.0f;
     x->num_events = count;
+    if (x->playing && count > 0 && x->play_index >= count)
+        x->play_index = 0;
 }
 
 void pattern_copy_to(t_telomere *x, t_float *pos_dest, t_float *vel_dest, int *count) {
