@@ -26,7 +26,7 @@ Like its namesake — the repetitive sequence capping each chromosome, ensuring 
 make                              # build with default Pd path
 make PD_PATH=/usr/include/pd      # specify custom Pd header location
 make test                         # compile-check using stub headers (no Pd install required)
-make test_unit                    # build and run standalone unit tests (66 assertions)
+make test_unit                    # build and run standalone unit tests (110 assertions)
 make clean                        # remove build artifacts
 ```
 
@@ -40,9 +40,14 @@ Copy the compiled binary into your Pd search path or into the same directory as 
 
 Create a `[telomere]` object in your Pd patch. An optional float argument sets the initial tempo: `[telomere 120]`.
 
-**Inlets:**
-- Left: `bang` — tap event during recording / trigger or sync playback
-- Right (float): velocity for the next recorded event (0.0–1.0, default 1.0)
+**Inlets (left to right):**
+1. `bang` — tap event during recording / trigger playback; `float` — set tempo; messages — all commands
+2. `bang` — external clock input (for `clockfollow` and `sync` modes)
+3. `float` — velocity for the next recorded event (0.0–1.0, default 1.0)
+4. `float` — accent modulation multiplier (default 1.0)
+5. `float` — jitter amount (0.0–1.0)
+6. `float` — skip probability (0.0–1.0)
+7. `float` — swing amount
 
 **Outlets (left to right):**
 1. Bang — fires on each playback event
@@ -123,26 +128,30 @@ Chain order matters — `chain_add fast 2` then `chain_add reverse` applies fast
 
 ### External clock sync
 
-`sync 1` changes the behavior of a bang on the main inlet when playback is running. Instead of re-triggering, a bang **resets the cycle phase**: the pattern jumps back to event 0 and the cycle's time reference is re-stamped to the moment of the bang.
+External clock and sync bangs are received on **inlet 2** (the dedicated clock inlet), keeping them separate from tap recording and playback triggers on inlet 1.
+
+`sync 1` enables sync mode. When playback is running, a bang on inlet 2 **resets the cycle phase**: the pattern jumps back to event 0 and the cycle's time reference is re-stamped to the moment of the bang.
 
 ```
 sync 1          enable external sync mode
-sync 0          disable (bang triggers new playback as normal)
+sync 0          disable (bangs on inlet 2 are ignored)
 ```
 
-Connect any periodic bang source — `[metro]`, a MIDI clock divider, a tap-tempo output — to the inlet to lock the pattern's cycle boundary to that source. Since the reset is hard (not tempo-tracking), telomere's internal event spacing still follows its own tempo; `sync` only eliminates drift at the cycle boundary.
+`clockfollow 1` enables clock-following mode. Bangs on inlet 2 are used to derive tempo from inter-bang intervals.
+
+Connect any periodic bang source — `[metro]`, a MIDI clock divider, a tap-tempo output — to **inlet 2** to lock the pattern's cycle boundary to that source. Since the reset is hard (not tempo-tracking), telomere's internal event spacing still follows its own tempo; `sync` only eliminates drift at the cycle boundary.
 
 Typical setup:
 
 ```
 [metro 2000]     ← one bang per bar at 120 BPM, 4/4
      |
-[telomere 120]
-     |
-[sync 1(         ← sent once to enable sync mode
+     |  [sync 1(         ← sent once to inlet 1 to enable sync mode
+     |       |
+[telomere 120]           ← metro connects to inlet 2 (clock)
 ```
 
-Every time the metro fires, the pattern restarts from the top. Drift across bars is zero regardless of how many cycles have passed.
+Every time the metro fires on inlet 2, the pattern restarts from the top. Taps on inlet 1 can still record while the clock runs. Drift across bars is zero regardless of how many cycles have passed.
 
 ### OSC control
 
@@ -202,7 +211,7 @@ transforms/
   palindrome.c rotate.c reverse.c fast.c slow.c
   euclid.c jitter.c skip.c degrade.c
 tests/
-  test_main.c               Unit tests (66 assertions, no Pd required)
+  test_main.c               Unit tests (110 assertions, no Pd required)
   pd_stub.c                 Minimal Pd runtime stubs for testing
 pd/
   m_pd.h                    Stub header for compile-time checking

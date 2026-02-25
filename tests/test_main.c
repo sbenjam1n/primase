@@ -399,6 +399,17 @@ static void test_clock_follow_fields(void) {
     free_telo(x);
 }
 
+static void test_clock_proxy_struct(void) {
+    t_telomere *x = new_telo();
+    /* Verify clock proxy fields are accessible and zero-initialized */
+    ASSERT(x->clock_proxy.x == NULL, "clock_proxy.x default NULL");
+    ASSERT(x->clock_inlet == NULL, "clock_inlet default NULL");
+    /* Simulate what telomere_new does: set back-pointer */
+    x->clock_proxy.x = x;
+    ASSERT(x->clock_proxy.x == x, "clock_proxy.x back-pointer set");
+    free_telo(x);
+}
+
 /* ------------------------------------------------------------------ */
 /* Phase 3: Pattern I/O tests                                         */
 /* ------------------------------------------------------------------ */
@@ -660,6 +671,7 @@ int main(void) {
     /* Phase 1: Clock following */
     printf("\n-- clock following --\n");
     test_clock_follow_fields();
+    test_clock_proxy_struct();
 
     /* Phase 3: Pattern I/O */
     printf("\n-- pattern I/O --\n");
