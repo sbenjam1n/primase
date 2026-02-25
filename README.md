@@ -1,6 +1,6 @@
 # telomere
 
-A Pure Data (Pd) external for algorithmic rhythm capture, quantization, and pattern transformation. Records tap-input rhythms as normalized cycle positions, plays them back through a non-destructive transform chain, and provides expressive per-cycle variation controls.
+Like its namesake — the repetitive sequence capping each chromosome, ensuring faithful replication cycle after cycle while gradually introducing variation — telomere is a Pure Data external that captures rhythmic patterns and replays them through non-destructive transform chains, preserving the source recording intact while layering controlled mutation with every pass.
 
 ## Features
 
@@ -16,6 +16,7 @@ A Pure Data (Pd) external for algorithmic rhythm capture, quantization, and patt
 - **Per-event skip weight** — independent skip probability per event for compositional variation
 - **Metric modulation** — smooth tempo transitions between related meters
 - **Extensible architecture** — add new transforms without modifying core code
+- **OSC control** — full remote control via Open Sound Control (39 endpoints across 8 categories) using `[telomere-osc]` abstraction
 
 ## Building
 
@@ -143,6 +144,28 @@ Typical setup:
 
 Every time the metro fires, the pattern restarts from the top. Drift across bars is zero regardless of how many cycles have passed.
 
+### OSC control
+
+The `telomere-osc` abstraction provides full remote control via Open Sound Control. Requires the mrpeach library.
+
+```
+[telomere-osc 9001]   ← create with UDP port number
+        |
+   [telomere 120]     ← connect outlet to telomere inlet
+```
+
+OSC address scheme: `/telomere/<category>/<parameter>`
+
+Categories: `/transport`, `/tempo`, `/pattern`, `/variation`, `/chain`, `/scene`, `/file`, `/query` (39 endpoints total). See `telomere-osc-help.pd` for the complete reference.
+
+```bash
+oscsend localhost 9001 /telomere/transport/loop f 1
+oscsend localhost 9001 /telomere/tempo/bpm f 140
+oscsend localhost 9001 /telomere/pattern/set fff 0.0 0.25 0.5
+oscsend localhost 9001 /telomere/chain/add sf euclid 3 8
+oscsend localhost 9001 /telomere/query/dump
+```
+
 ## Adding a transform
 
 1. Create `transforms/mytransform.c`:
@@ -183,6 +206,8 @@ tests/
   pd_stub.c                 Minimal Pd runtime stubs for testing
 pd/
   m_pd.h                    Stub header for compile-time checking
+telomere-osc.pd             OSC receiver/router abstraction (mrpeach)
+telomere-osc-help.pd        OSC endpoint reference documentation
 Makefile                    Platform-aware build system
 ```
 
