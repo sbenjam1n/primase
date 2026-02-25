@@ -4,12 +4,11 @@ telomere~ is a pattern replicator and cyclic mutation external for Pure Data.
 
 ## Features
 
-- **Tap-input / bang recording** — capture rhythms in real-time as normalized positions (0.0–1.0) within a cycle
+- **Tap-input / bang recording** — capture and loop rhythms in real-time as normalized positions (0.0–1.0) within a cycle
 - **Variable quantization** — continuously adjustable snap strength (0–100%) against a configurable grid
 - **Non-destructive transform chain** — apply ordered transforms that stay editable live; the original recording is never mutated
 - **Euclidean rhythms** — generate Bjorklund-distributed patterns (k hits in N steps)
 - **Pattern transforms** — `palindrome`, `rotate`, `reverse`, `fast`, `slow`, `euclid`, `jitter`, `skip`, `degrade`
-- **Loop mode** — auto-restart at cycle end for hands-free looping
 - **Armed recording** — quantize record start to the next cycle boundary so overdubs land in time
 - **External clock sync** — lock cycle phase to an incoming bang (from `[metro]`, MIDI clock, etc.)
 - **Swing** — delay odd-indexed events to add rhythmic feel without modifying the stored pattern
