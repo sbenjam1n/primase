@@ -4,3 +4,4 @@
 *.pd_darwin
 *.pd_win32
 *.pd_win64
+tests/test_runner
