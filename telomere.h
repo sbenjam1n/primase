@@ -30,6 +30,12 @@ typedef struct _scene {
     int      occupied;  /* 0 = empty, 1 = has data */
 } t_scene;
 
+/* Clock proxy for dedicated clock inlet (inlet 2) */
+typedef struct _telomere_clock_proxy {
+    t_pd             pd;
+    struct _telomere *x;    /* back-pointer to owning telomere */
+} t_telomere_clock_proxy;
+
 typedef struct _telomere {
     t_object  x_obj;
 
@@ -114,6 +120,10 @@ typedef struct _telomere {
     /* --- Clock object --- */
     t_clock  *playback_clock;   /* clock for scheduling playback events    */
     int       play_index;       /* current index during playback           */
+
+    /* --- Clock proxy inlet (inlet 2) --- */
+    t_telomere_clock_proxy clock_proxy; /* proxy receiver for clock bangs  */
+    t_inlet  *clock_inlet;             /* the inlet object itself          */
 
     /* --- Inlet value --- */
     t_float   f_inlet;          /* dummy float inlet                       */

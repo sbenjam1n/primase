@@ -109,6 +109,7 @@ typedef void    *(*t_newmethod)(void);
 typedef void     (*t_freemethod)(void *);
 
 #define CLASS_DEFAULT 0
+#define CLASS_PD      2
 
 /* ---- well-known symbols (provided by Pd runtime) ---- */
 extern t_symbol s_bang, s_list, s_float, s_symbol, s_anything;

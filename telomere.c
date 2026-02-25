@@ -26,6 +26,7 @@ typedef void (*t_freemethod)(void *);
 #include "telomere_pattern_api.h"
 
 t_class *telomere_class;
+static t_class *telomere_clock_proxy_class;
 
 /* ------------------------------------------------------------------ */
 /* Forward declarations                                               */
@@ -180,7 +181,7 @@ static void telomere_tick(t_telomere *x) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Bang — record a tap, trigger playback, or reset cycle (sync mode) */
+/* Bang — record a tap or trigger playback (inlet 1)                 */
 /* ------------------------------------------------------------------ */
 
 static void telomere_bang(t_telomere *x) {
@@ -239,55 +240,6 @@ static void telomere_bang(t_telomere *x) {
         source_append_event(x, pos, vel);
         telomere_chain_eval(x);
         outlet_float(x->out_count, (t_float)x->num_events);
-        return;
-    }
-
-    /* Phase 1: Clock following — derive tempo from bang intervals */
-    if (x->clock_follow && x->playing) {
-        double now = clock_getlogicaltime();
-        if (x->last_bang_time > 0.0) {
-            double interval_units = now - x->last_bang_time;
-            double interval_ms = interval_units / 14112.0;
-            if (interval_ms > 0.0) {
-                x->tempo = (t_float)(60000.0 / (interval_ms * x->clock_div));
-                x->cycle_length_ms = (60000.0 / (double)x->tempo) * x->beats_per_cycle;
-            }
-        }
-        x->last_bang_time = now;
-        x->clock_bang_count++;
-        if (x->clock_bang_count >= x->clock_div) {
-            /* Reset cycle at clock_div boundary */
-            x->clock_bang_count = 0;
-            if (x->num_events == 0) {
-                clock_unset(x->playback_clock);
-                x->playing = 0;
-                x->play_index = 0;
-                return;
-            }
-            clock_unset(x->playback_clock);
-            x->play_index = 0;
-            x->cycle_start_time = clock_getlogicaltime();
-            double delay = effective_pos(x, 0) * x->cycle_length_ms;
-            if (delay < 0.1) delay = 0.1;
-            clock_delay(x->playback_clock, delay);
-        }
-        return;
-    }
-
-    if (x->sync_mode && x->playing) {
-        /* External sync: reset cycle phase to now */
-        if (x->num_events == 0) {
-            clock_unset(x->playback_clock);
-            x->playing = 0;
-            x->play_index = 0;
-            return;
-        }
-        clock_unset(x->playback_clock);
-        x->play_index = 0;
-        x->cycle_start_time = clock_getlogicaltime();
-        double delay = effective_pos(x, 0) * x->cycle_length_ms;
-        if (delay < 0.1) delay = 0.1;
-        clock_delay(x->playback_clock, delay);
         return;
     }
 
@@ -920,6 +872,63 @@ static void telomere_recall(t_telomere *x, t_float fslot) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Clock proxy bang handler (inlet 2)                                 */
+/* ------------------------------------------------------------------ */
+
+static void telomere_clock_proxy_bang(t_telomere_clock_proxy *p) {
+    t_telomere *x = p->x;
+
+    /* Clock following — derive tempo from bang intervals */
+    if (x->clock_follow && x->playing) {
+        double now = clock_getlogicaltime();
+        if (x->last_bang_time > 0.0) {
+            double interval_units = now - x->last_bang_time;
+            double interval_ms = interval_units / 14112.0;
+            if (interval_ms > 0.0) {
+                x->tempo = (t_float)(60000.0 / (interval_ms * x->clock_div));
+                x->cycle_length_ms = (60000.0 / (double)x->tempo) * x->beats_per_cycle;
+            }
+        }
+        x->last_bang_time = now;
+        x->clock_bang_count++;
+        if (x->clock_bang_count >= x->clock_div) {
+            /* Reset cycle at clock_div boundary */
+            x->clock_bang_count = 0;
+            if (x->num_events == 0) {
+                clock_unset(x->playback_clock);
+                x->playing = 0;
+                x->play_index = 0;
+                return;
+            }
+            clock_unset(x->playback_clock);
+            x->play_index = 0;
+            x->cycle_start_time = clock_getlogicaltime();
+            double delay = effective_pos(x, 0) * x->cycle_length_ms;
+            if (delay < 0.1) delay = 0.1;
+            clock_delay(x->playback_clock, delay);
+        }
+        return;
+    }
+
+    /* External sync: reset cycle phase to now */
+    if (x->sync_mode && x->playing) {
+        if (x->num_events == 0) {
+            clock_unset(x->playback_clock);
+            x->playing = 0;
+            x->play_index = 0;
+            return;
+        }
+        clock_unset(x->playback_clock);
+        x->play_index = 0;
+        x->cycle_start_time = clock_getlogicaltime();
+        double delay = effective_pos(x, 0) * x->cycle_length_ms;
+        if (delay < 0.1) delay = 0.1;
+        clock_delay(x->playback_clock, delay);
+        return;
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Constructor / Destructor                                           */
 /* ------------------------------------------------------------------ */
 
@@ -1004,15 +1013,20 @@ static void *telomere_new(t_float tempo) {
 
     x->playback_clock = clock_new(x, (t_method)telomere_tick);
 
-    /* Inlet 2: velocity (existing) */
+    /* Inlet 2: clock proxy (dedicated clock/sync inlet) */
+    x->clock_proxy.x = x;
+    x->clock_proxy.pd = telomere_clock_proxy_class;
+    x->clock_inlet = inlet_new(&x->x_obj, &x->clock_proxy.pd, 0, 0);
+
+    /* Inlet 3: velocity */
     floatinlet_new(&x->x_obj, &x->current_velocity);
-    /* Inlet 3: accent modulation */
+    /* Inlet 4: accent modulation */
     floatinlet_new(&x->x_obj, &x->mod_accent);
-    /* Inlet 4: jitter amount */
+    /* Inlet 5: jitter amount */
     floatinlet_new(&x->x_obj, &x->jitter_amt);
-    /* Inlet 5: skip probability */
+    /* Inlet 6: skip probability */
     floatinlet_new(&x->x_obj, &x->skip_prob);
-    /* Inlet 6: swing amount */
+    /* Inlet 7: swing amount */
     floatinlet_new(&x->x_obj, &x->swing_amt);
 
     x->f_inlet = 0.0f;
@@ -1041,6 +1055,12 @@ static void telomere_free(t_telomere *x) {
 /* ------------------------------------------------------------------ */
 
 EXTERN void telomere_setup(void) {
+    /* Clock proxy class for dedicated clock inlet */
+    telomere_clock_proxy_class = class_new(gensym("telomere_clock_proxy"),
+        0, 0, sizeof(t_telomere_clock_proxy), CLASS_PD, 0);
+    class_addbang(telomere_clock_proxy_class,
+        (t_method)telomere_clock_proxy_bang);
+
     telomere_class = class_new(
         gensym("telomere"),
         (t_newmethod)telomere_new,
