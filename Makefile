@@ -1,7 +1,7 @@
-# Makefile for telomere Pd external
+# Makefile for primase Pd external
 #
 # Usage:
-#   make              — build telomere.pd_linux (or .pd_darwin on macOS)
+#   make              — build primase.pd_linux (or .pd_darwin on macOS)
 #   make PD_PATH=/usr/include/pd   — specify Pd headers location
 #   make clean        — remove build artifacts
 #   make test         — compile-check with stub headers
@@ -22,12 +22,12 @@ PD_PATH ?= pd
 
 CC = gcc
 CFLAGS = -Wall -Wextra -Wpedantic -O2 -fPIC -I$(PD_PATH)
-TARGET = telomere.$(SUFFIX)
+TARGET = primase.$(SUFFIX)
 
 # Source files
-CORE_SRC = telomere.c \
-           telomere_pattern_api.c \
-           telomere_registry.c
+CORE_SRC = primase.c \
+           primase_pattern_api.c \
+           primase_registry.c
 
 TRANSFORM_SRC = transforms/builtins.c \
                 transforms/palindrome.c \
@@ -63,8 +63,8 @@ test:
 # Unit test target: standalone runner, no Pd runtime needed
 TEST_SRC = tests/test_main.c \
            tests/pd_stub.c \
-           telomere_pattern_api.c \
-           telomere_registry.c \
+           primase_pattern_api.c \
+           primase_registry.c \
            transforms/palindrome.c \
            transforms/rotate.c \
            transforms/reverse.c \
@@ -85,6 +85,6 @@ test_unit: $(TEST_SRC)
 	./tests/test_runner
 
 clean:
-	rm -f $(ALL_OBJ) $(TARGET) telomere.pd_linux telomere.pd_darwin tests/test_runner
+	rm -f $(ALL_OBJ) $(TARGET) primase.pd_linux primase.pd_darwin tests/test_runner
 
 .PHONY: all clean test test_unit

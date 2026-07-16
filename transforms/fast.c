@@ -1,22 +1,22 @@
 /* fast.c — Compress pattern to repeat N times per cycle */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 
-static void transform_fast(t_telomere *x, int argc, t_atom *argv) {
+static void transform_fast(t_primase *x, int argc, t_atom *argv) {
     int n = pattern_num_events(x);
     if (n == 0) return;
 
     int factor = (int)atom_getfloatarg(0, argc, argv);
     if (factor < 2) factor = 2;
 
-    t_float orig[TELOMERE_MAX_EVENTS];
-    t_float orig_vel[TELOMERE_MAX_EVENTS];
+    t_float orig[PRIMASE_MAX_EVENTS];
+    t_float orig_vel[PRIMASE_MAX_EVENTS];
     int count;
     pattern_copy_to(x, orig, orig_vel, &count);
 
     int new_size = count * factor;
-    if (new_size > TELOMERE_MAX_EVENTS) new_size = TELOMERE_MAX_EVENTS;
+    if (new_size > PRIMASE_MAX_EVENTS) new_size = PRIMASE_MAX_EVENTS;
 
     pattern_resize(x, new_size);
 
@@ -38,7 +38,7 @@ static void transform_fast(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void fast_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("fast"),
         transform_fast,
         "Compress pattern to repeat N times per cycle",

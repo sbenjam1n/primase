@@ -1,17 +1,17 @@
 /* palindrome.c — Append reversed pattern to create a palindromic loop */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 
-static void transform_palindrome(t_telomere *x, int argc, t_atom *argv) {
+static void transform_palindrome(t_primase *x, int argc, t_atom *argv) {
     (void)argc; (void)argv;
 
     int n = pattern_num_events(x);
     if (n == 0) return;
 
     int new_size = n * 2;
-    t_float buf[TELOMERE_MAX_EVENTS];
-    t_float vel[TELOMERE_MAX_EVENTS];
+    t_float buf[PRIMASE_MAX_EVENTS];
+    t_float vel[PRIMASE_MAX_EVENTS];
     int count;
     pattern_copy_to(x, buf, vel, &count);
 
@@ -29,7 +29,7 @@ static void transform_palindrome(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void palindrome_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("palindrome"),
         transform_palindrome,
         "Append reversed pattern to create palindromic loop",

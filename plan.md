@@ -1,4 +1,4 @@
-# Telomere Implementation Plan
+# Primase Implementation Plan
 
 ## Phase 1: Transform Chain (non-destructive transform system)
 
@@ -6,7 +6,7 @@ This is the architectural foundation. Many later items (undo, swing, per-event w
 
 ### 1a. Source pattern buffer and playback buffer
 
-**telomere.h** — add to `t_telomere`:
+**primase.h** — add to `t_primase`:
 ```c
 t_float  *source;           /* frozen source pattern (positions)           */
 t_float  *source_vel;       /* frozen source velocities                    */
@@ -18,14 +18,14 @@ int       source_alloc;     /* allocated capacity for source buffers       */
 
 **Recording**, **`read`**, **`euclid`**, and **`clear`** write to `source`/`source_vel`, then trigger chain re-evaluation to populate `pattern`/`velocity`.
 
-**telomere_new** allocates `source` and `source_vel` (same initial size as `pattern`).
-**telomere_free** frees them.
+**primase_new** allocates `source` and `source_vel` (same initial size as `pattern`).
+**primase_free** frees them.
 
 ### 1b. Chain storage
 
-**telomere.h** — new struct and fields:
+**primase.h** — new struct and fields:
 ```c
-#define TELOMERE_MAX_CHAIN 16
+#define PRIMASE_MAX_CHAIN 16
 
 typedef struct _chain_entry {
     t_symbol *name;                 /* transform name ("fast", "reverse", ...) */
@@ -35,18 +35,18 @@ typedef struct _chain_entry {
 } t_chain_entry;
 ```
 
-Add to `t_telomere`:
+Add to `t_primase`:
 ```c
-t_chain_entry chain[TELOMERE_MAX_CHAIN];
+t_chain_entry chain[PRIMASE_MAX_CHAIN];
 int           chain_len;
 ```
 
 ### 1c. Chain evaluation function
 
-New function in `telomere.c` (or a new `telomere_chain.c`):
+New function in `primase.c` (or a new `primase_chain.c`):
 
 ```
-telomere_chain_eval(t_telomere *x)
+primase_chain_eval(t_primase *x)
 ```
 
 1. Copy `source`/`source_vel` → `pattern`/`velocity` (via `pattern_replace`)
@@ -69,7 +69,7 @@ This means **all existing transforms work as-is with zero modification**.
 | `chain_bypass <index> <0\|1>` | Toggle bypass on entry, re-evaluate |
 | `chain_dump` | Print current chain to console |
 
-All of these call `telomere_chain_eval` after modifying the chain.
+All of these call `primase_chain_eval` after modifying the chain.
 
 ### 1e. Backward compatibility
 
@@ -101,12 +101,12 @@ This is the correct inversion of `fast N` (which divides positions by N and repe
 
 ## Phase 3: Loop mode
 
-**telomere.h** — add:
+**primase.h** — add:
 ```c
 int loop;  /* 1 = auto-restart at end of cycle */
 ```
 
-**telomere_tick** — where playback currently stops (`x->playing = 0`), instead check:
+**primase_tick** — where playback currently stops (`x->playing = 0`), instead check:
 ```c
 if (x->loop) {
     x->play_index = 0;
@@ -129,7 +129,7 @@ The `armed` field already exists. Implement:
 
 **`record` message when not recording:**
 - If currently playing, set `x->armed = 1` instead of starting immediately.
-- At cycle boundary (in `telomere_tick` when cycle completes), if `armed`:
+- At cycle boundary (in `primase_tick` when cycle completes), if `armed`:
   - `x->armed = 0; x->recording = 1; pattern_clear(source); x->cycle_start_time = clock_getlogicaltime();`
 - If not playing, start recording immediately (current behavior).
 
@@ -141,7 +141,7 @@ The `armed` field already exists. Implement:
 
 ## Phase 5: External clock sync
 
-**telomere.h** — add:
+**primase.h** — add:
 ```c
 int sync_mode;  /* 0 = internal, 1 = external clock */
 ```
@@ -153,7 +153,7 @@ int sync_mode;  /* 0 = internal, 1 = external clock */
 - This lets an external `[metro]` or MIDI clock drive the cycle boundary.
 - Playback re-triggers from the top of the pattern on each sync bang.
 
-**Implementation:** In `telomere_bang`, add a branch for `x->sync_mode && x->playing`:
+**Implementation:** In `primase_bang`, add a branch for `x->sync_mode && x->playing`:
 ```c
 if (x->sync_mode && x->playing) {
     /* External sync: restart cycle */
@@ -171,12 +171,12 @@ if (x->sync_mode && x->playing) {
 
 ## Phase 6: Swing
 
-**telomere.h** — add:
+**primase.h** — add:
 ```c
 t_float swing_amt;  /* 0.0 = straight, positive = delay even-indexed events */
 ```
 
-**Applied at playback time in `telomere_tick`** (not baked into the pattern):
+**Applied at playback time in `primase_tick`** (not baked into the pattern):
 ```c
 t_float swing_offset = 0.0f;
 if (x->swing_amt != 0.0f && (x->play_index % 2 == 1)) {
@@ -193,14 +193,14 @@ This delays every odd-indexed event by `swing_amt` grid subdivisions. Applied at
 
 ## Phase 7: Per-event skip weight
 
-**telomere.h** — add:
+**primase.h** — add:
 ```c
 t_float *skip_weight;  /* per-event probability multiplier, parallel to pattern[] */
 ```
 
 Allocated/freed alongside `pattern`/`velocity`. Default all 1.0.
 
-**telomere_tick** skip logic changes from:
+**primase_tick** skip logic changes from:
 ```c
 if (r < x->skip_prob)
 ```
@@ -234,7 +234,7 @@ Create `tests/` directory with a standalone test runner. Since transforms use th
 
 **Makefile** — add `make test_unit` target that compiles the test runner against the stub headers and runs it.
 
-**Document `pattern_sort` requirement:** Add a comment to `telomere_transform.h` near the `t_transform_fn` typedef stating that transforms MUST leave the pattern in sorted order (call `pattern_sort` if positions were modified). Also add a post-condition check in `telomere_chain_eval` that warns if the pattern is unsorted after a transform.
+**Document `pattern_sort` requirement:** Add a comment to `primase_transform.h` near the `t_transform_fn` typedef stating that transforms MUST leave the pattern in sorted order (call `pattern_sort` if positions were modified). Also add a post-condition check in `primase_chain_eval` that warns if the pattern is unsorted after a transform.
 
 ---
 
@@ -242,10 +242,10 @@ Create `tests/` directory with a standalone test runner. Since transforms use th
 
 | File | Changes |
 |---|---|
-| `telomere.h` | Add source buffers, chain storage, loop, sync_mode, swing_amt, skip_weight fields |
-| `telomere.c` | Add chain_eval, chain messages, loop logic in tick, armed logic, sync logic, swing in tick, skip_weight in tick |
-| `telomere_pattern_api.h` | Add skip_weight accessors; document sort requirement |
-| `telomere_pattern_api.c` | Carry skip_weight through all bulk ops; add accessors |
+| `primase.h` | Add source buffers, chain storage, loop, sync_mode, swing_amt, skip_weight fields |
+| `primase.c` | Add chain_eval, chain messages, loop logic in tick, armed logic, sync logic, swing in tick, skip_weight in tick |
+| `primase_pattern_api.h` | Add skip_weight accessors; document sort requirement |
+| `primase_pattern_api.c` | Carry skip_weight through all bulk ops; add accessors |
 | `transforms/slow.c` | Fix to multiply positions by factor, discard >= 1.0 |
 | `transforms/builtins.c` | No changes needed |
 | `tests/test_main.c` | New: unit test runner |

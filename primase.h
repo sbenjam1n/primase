@@ -1,14 +1,14 @@
-/* telomere.h — Main struct definition for the telomere Pd external */
-#ifndef TELOMERE_H
-#define TELOMERE_H
+/* primase.h — Main struct definition for the primase Pd external */
+#ifndef PRIMASE_H
+#define PRIMASE_H
 
 #include "m_pd.h"
 
-#define TELOMERE_MAX_EVENTS   256
-#define TELOMERE_DEFAULT_GRID 16
-#define TELOMERE_DEFAULT_TEMPO 120.0f
-#define TELOMERE_MAX_CHAIN    16
-#define TELOMERE_MAX_SCENES   8
+#define PRIMASE_MAX_EVENTS   256
+#define PRIMASE_DEFAULT_GRID 16
+#define PRIMASE_DEFAULT_TEMPO 120.0f
+#define PRIMASE_MAX_CHAIN    16
+#define PRIMASE_MAX_SCENES   8
 
 /* One entry in the non-destructive transform chain.
  * argc/argv store the arguments so the chain can be re-evaluated from
@@ -22,21 +22,21 @@ typedef struct _chain_entry {
 
 /* Scene memory slot for store/recall during improvisation */
 typedef struct _scene {
-    t_float  source[TELOMERE_MAX_EVENTS];
-    t_float  source_vel[TELOMERE_MAX_EVENTS];
+    t_float  source[PRIMASE_MAX_EVENTS];
+    t_float  source_vel[PRIMASE_MAX_EVENTS];
     int      source_count;
-    t_chain_entry chain[TELOMERE_MAX_CHAIN];
+    t_chain_entry chain[PRIMASE_MAX_CHAIN];
     int      chain_len;
     int      occupied;  /* 0 = empty, 1 = has data */
 } t_scene;
 
 /* Clock proxy for dedicated clock inlet (inlet 2) */
-typedef struct _telomere_clock_proxy {
+typedef struct _primase_clock_proxy {
     t_pd             pd;
-    struct _telomere *x;    /* back-pointer to owning telomere */
-} t_telomere_clock_proxy;
+    struct _primase *x;    /* back-pointer to owning primase */
+} t_primase_clock_proxy;
 
-typedef struct _telomere {
+typedef struct _primase {
     t_object  x_obj;
 
     /* --- Derived pattern (source + chain applied; read by playback) --- */
@@ -53,7 +53,7 @@ typedef struct _telomere {
     int       source_alloc;     /* allocated capacity for source buffers   */
 
     /* --- Transform chain --- */
-    t_chain_entry chain[TELOMERE_MAX_CHAIN];
+    t_chain_entry chain[PRIMASE_MAX_CHAIN];
     int           chain_len;    /* number of active chain entries          */
 
     /* --- Velocity input --- */
@@ -115,24 +115,24 @@ typedef struct _telomere {
     t_outlet *out_state;        /* state query outlet (Phase 2)            */
 
     /* --- Scene memory (Phase 8) --- */
-    t_scene   scenes[TELOMERE_MAX_SCENES];
+    t_scene   scenes[PRIMASE_MAX_SCENES];
 
     /* --- Clock object --- */
     t_clock  *playback_clock;   /* clock for scheduling playback events    */
     int       play_index;       /* current index during playback           */
 
     /* --- Clock proxy inlet (inlet 2) --- */
-    t_telomere_clock_proxy clock_proxy; /* proxy receiver for clock bangs  */
+    t_primase_clock_proxy clock_proxy; /* proxy receiver for clock bangs  */
     t_inlet  *clock_inlet;             /* the inlet object itself          */
 
     /* --- Inlet value --- */
     t_float   f_inlet;          /* dummy float inlet                       */
-} t_telomere;
+} t_primase;
 
 /* Externally visible class pointer */
-extern t_class *telomere_class;
+extern t_class *primase_class;
 
 /* Setup function */
-EXTERN void telomere_setup(void);
+EXTERN void primase_setup(void);
 
-#endif /* TELOMERE_H */
+#endif /* PRIMASE_H */

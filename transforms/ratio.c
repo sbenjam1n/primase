@@ -1,10 +1,10 @@
 /* ratio.c — Fractional time scaling for polyrhythm */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 #include <math.h>
 
-static void transform_ratio(t_telomere *x, int argc, t_atom *argv) {
+static void transform_ratio(t_primase *x, int argc, t_atom *argv) {
     int n = pattern_num_events(x);
     if (n == 0) return;
 
@@ -15,8 +15,8 @@ static void transform_ratio(t_telomere *x, int argc, t_atom *argv) {
 
     float factor = (float)num / (float)den;
 
-    t_float orig[TELOMERE_MAX_EVENTS];
-    t_float orig_vel[TELOMERE_MAX_EVENTS];
+    t_float orig[PRIMASE_MAX_EVENTS];
+    t_float orig_vel[PRIMASE_MAX_EVENTS];
     int count;
     pattern_copy_to(x, orig, orig_vel, &count);
 
@@ -24,7 +24,7 @@ static void transform_ratio(t_telomere *x, int argc, t_atom *argv) {
         /* Compress to fit multiple repetitions */
         int reps = (int)ceilf(factor);
         int new_size = count * reps;
-        if (new_size > TELOMERE_MAX_EVENTS) new_size = TELOMERE_MAX_EVENTS;
+        if (new_size > PRIMASE_MAX_EVENTS) new_size = PRIMASE_MAX_EVENTS;
         pattern_resize(x, new_size);
 
         int idx = 0;
@@ -59,7 +59,7 @@ static void transform_ratio(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void ratio_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("ratio"),
         transform_ratio,
         "Fractional time scaling N/D for polyrhythm",

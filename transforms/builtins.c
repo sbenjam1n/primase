@@ -15,7 +15,7 @@ extern void ratchet_register(void);
 extern void accent_register(void);
 extern void drift_register(void);
 
-void telomere_transforms_builtins_setup(void) {
+void primase_transforms_builtins_setup(void) {
     palindrome_register();
     rotate_register();
     reverse_register();

@@ -1,9 +1,9 @@
 /* ratchet.c — Subdivide a single event into a rapid burst */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 
-static void transform_ratchet(t_telomere *x, int argc, t_atom *argv) {
+static void transform_ratchet(t_primase *x, int argc, t_atom *argv) {
     int n = pattern_num_events(x);
     if (n == 0) return;
 
@@ -22,8 +22,8 @@ static void transform_ratchet(t_telomere *x, int argc, t_atom *argv) {
     t_float orig_vel = pattern_get_velocity(x, index);
 
     /* Save all events after the target */
-    t_float after_pos[TELOMERE_MAX_EVENTS];
-    t_float after_vel[TELOMERE_MAX_EVENTS];
+    t_float after_pos[PRIMASE_MAX_EVENTS];
+    t_float after_vel[PRIMASE_MAX_EVENTS];
     int after_count = n - index - 1;
     for (int i = 0; i < after_count; i++) {
         after_pos[i] = pattern_get_event(x, index + 1 + i);
@@ -32,8 +32,8 @@ static void transform_ratchet(t_telomere *x, int argc, t_atom *argv) {
 
     /* Resize to fit: events before target + count ratcheted + events after */
     int new_total = index + count + after_count;
-    if (new_total > TELOMERE_MAX_EVENTS) {
-        count = TELOMERE_MAX_EVENTS - index - after_count;
+    if (new_total > PRIMASE_MAX_EVENTS) {
+        count = PRIMASE_MAX_EVENTS - index - after_count;
         if (count < 2) return;
         new_total = index + count + after_count;
     }
@@ -58,7 +58,7 @@ static void transform_ratchet(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void ratchet_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("ratchet"),
         transform_ratchet,
         "Subdivide event at index into count rapid hits",

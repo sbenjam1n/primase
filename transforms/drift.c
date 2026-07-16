@@ -1,10 +1,10 @@
 /* drift.c — Evolving random walk on event positions */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 #include <stdlib.h>
 
-static void transform_drift(t_telomere *x, int argc, t_atom *argv) {
+static void transform_drift(t_primase *x, int argc, t_atom *argv) {
     int n = pattern_num_events(x);
     if (n == 0) return;
 
@@ -26,7 +26,7 @@ static void transform_drift(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void drift_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("drift"),
         transform_drift,
         "Evolving random walk on positions (amount)",

@@ -1,7 +1,7 @@
-/* tests/test_main.c — Unit tests for telomere pattern API and transforms.
+/* tests/test_main.c — Unit tests for primase pattern API and transforms.
  *
  * Tests are deliberately standalone: no Pd runtime, no clock, no outlets.
- * Each test creates a minimal t_telomere on the heap, exercises the API,
+ * Each test creates a minimal t_primase on the heap, exercises the API,
  * and frees it.  See tests/pd_stub.c for the runtime stubs.
  *
  * Run: make test_unit
@@ -12,9 +12,9 @@
 #include <math.h>
 #include <string.h>
 #include "m_pd.h"
-#include "telomere.h"
-#include "telomere_pattern_api.h"
-#include "telomere_transform.h"
+#include "primase.h"
+#include "primase_pattern_api.h"
+#include "primase_transform.h"
 
 /* ------------------------------------------------------------------ */
 /* Minimal test harness                                               */
@@ -36,11 +36,11 @@ static int g_failures = 0;
     ASSERT(fabsf((float)(a) - (float)(b)) < (float)(eps), msg)
 
 /* ------------------------------------------------------------------ */
-/* Helper: allocate a minimal t_telomere for testing                  */
+/* Helper: allocate a minimal t_primase for testing                  */
 /* ------------------------------------------------------------------ */
 
-static t_telomere *new_telo(void) {
-    t_telomere *x = (t_telomere *)calloc(1, sizeof(t_telomere));
+static t_primase *new_telo(void) {
+    t_primase *x = (t_primase *)calloc(1, sizeof(t_primase));
     x->pattern_alloc = 32;
     x->pattern     = (t_float *)getbytes(32 * sizeof(t_float));
     x->velocity    = (t_float *)getbytes(32 * sizeof(t_float));
@@ -64,7 +64,7 @@ static t_telomere *new_telo(void) {
     return x;
 }
 
-static void free_telo(t_telomere *x) {
+static void free_telo(t_primase *x) {
     freebytes(x->pattern,     x->pattern_alloc * sizeof(t_float));
     freebytes(x->velocity,    x->pattern_alloc * sizeof(t_float));
     freebytes(x->skip_weight, x->pattern_alloc * sizeof(t_float));
@@ -78,7 +78,7 @@ static void free_telo(t_telomere *x) {
 /* ------------------------------------------------------------------ */
 
 static void test_append_and_count(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     ASSERT(pattern_num_events(x) == 0, "empty count == 0");
     pattern_append_event(x, 0.25f, 0.8f);
     pattern_append_event(x, 0.75f, 0.5f);
@@ -90,7 +90,7 @@ static void test_append_and_count(void) {
 }
 
 static void test_skip_weight_default(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.5f, 1.0f);
     ASSERT_FLOAT_EQ(pattern_get_skip_weight(x, 0), 1.0f, 1e-5f,
                     "new event default skip_weight == 1.0");
@@ -98,7 +98,7 @@ static void test_skip_weight_default(void) {
 }
 
 static void test_skip_weight_set(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.1f, 1.0f);
     pattern_append_event(x, 0.5f, 1.0f);
     pattern_set_skip_weight(x, 1, 0.3f);
@@ -108,7 +108,7 @@ static void test_skip_weight_set(void) {
 }
 
 static void test_clear(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.1f, 1.0f);
     pattern_append_event(x, 0.5f, 1.0f);
     pattern_clear(x);
@@ -117,7 +117,7 @@ static void test_clear(void) {
 }
 
 static void test_sort(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* Append out of order */
     pattern_append_event(x, 0.9f, 0.1f);
     pattern_append_event(x, 0.1f, 0.9f);
@@ -133,7 +133,7 @@ static void test_sort(void) {
 }
 
 static void test_sort_carries_skip_weight(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.8f, 1.0f);
     pattern_append_event(x, 0.2f, 1.0f);
     x->skip_weight[0] = 0.7f; /* attached to pos=0.8 */
@@ -149,7 +149,7 @@ static void test_sort_carries_skip_weight(void) {
 }
 
 static void test_replace_resets_skip_weight(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     t_float pos[] = {0.25f, 0.75f};
     t_float vel[] = {0.8f,  0.5f};
     pattern_replace(x, pos, vel, 2);
@@ -162,7 +162,7 @@ static void test_replace_resets_skip_weight(void) {
 }
 
 static void test_source_api(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     ASSERT(source_num_events(x) == 0, "source empty initially");
     source_append_event(x, 0.1f, 0.9f);
     source_append_event(x, 0.6f, 0.5f);
@@ -178,10 +178,10 @@ static void test_source_api(void) {
 /* Transform tests                                                    */
 /* ------------------------------------------------------------------ */
 
-static void call_transform(t_telomere *x, const char *name,
+static void call_transform(t_primase *x, const char *name,
                            int argc, t_float *fargs) {
     t_symbol *sym = gensym(name);
-    t_transform_entry *e = telomere_lookup_transform(sym);
+    t_transform_entry *e = primase_lookup_transform(sym);
     if (!e) { fprintf(stderr, "call_transform: '%s' not found\n", name); return; }
     t_atom argv[4];
     for (int i = 0; i < argc; i++) SETFLOAT(&argv[i], fargs[i]);
@@ -189,7 +189,7 @@ static void call_transform(t_telomere *x, const char *name,
 }
 
 static void test_reverse(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* [0.0, 0.25, 0.5, 0.75] reversed -> [0.25, 0.5, 0.75, 1.0-0=0.0→wrap]
      * reverse maps p → 1-p, then sorts.
      * 0.0  → 1.0 wraps to 0.0
@@ -211,7 +211,7 @@ static void test_reverse(void) {
 }
 
 static void test_fast(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* [0.0, 0.5] with fast 2 → 4 events: [0, 0.25, 0.5, 0.75] */
     pattern_append_event(x, 0.0f, 1.0f);
     pattern_append_event(x, 0.5f, 1.0f);
@@ -226,7 +226,7 @@ static void test_fast(void) {
 }
 
 static void test_slow(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* [0.0, 0.25, 0.5, 0.75] with slow 2:
      * 0.0  * 2 = 0.0  -> keep
      * 0.25 * 2 = 0.5  -> keep
@@ -248,7 +248,7 @@ static void test_slow(void) {
 static void test_slow_not_compressing(void) {
     /* Regression: old slow compressed events toward 0, making them
      * fire closer together (wrong). New slow stretches events apart. */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.1f, 1.0f);
     pattern_append_event(x, 0.4f, 1.0f);
     t_float args[] = {2.0f};
@@ -266,7 +266,7 @@ static void test_slow_not_compressing(void) {
 static void test_fast_slow_inverse(void) {
     /* fast N then slow N should approximately restore original spacing
      * (events that fit in 1/N of the cycle) */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.0f,  1.0f);
     pattern_append_event(x, 0.1f,  1.0f);
     pattern_append_event(x, 0.2f,  1.0f);
@@ -290,7 +290,7 @@ static void test_fast_slow_inverse(void) {
 }
 
 static void test_palindrome(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* [0.0, 0.5] -> palindrome -> [0.0, 0.25, 0.5, 0.75]
      * first half: 0.0*0.5=0.0, 0.5*0.5=0.25
      * second half (reversed): mirror into [0.5,1.0)
@@ -309,7 +309,7 @@ static void test_palindrome(void) {
 }
 
 static void test_rotate(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* [0.0, 0.25, 0.5, 0.75], grid=4, rotate 1 -> shift by 1/4 = 0.25
      * 0.0+0.25=0.25, 0.25+0.25=0.50, 0.50+0.25=0.75, 0.75+0.25=1.0 wraps to 0.0
      * sorted: [0.0, 0.25, 0.5, 0.75] (same pattern, just phase shifted) */
@@ -331,7 +331,7 @@ static void test_rotate(void) {
 static void test_euclid(void) {
     /* E(3,8) — 3 hits in 8 slots: Bresenham gives positions 0, 3, 6
      * as slot indices -> 0/8=0.0, 3/8=0.375, 6/8=0.75 */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     t_float args[] = {3.0f, 8.0f};
     call_transform(x, "euclid", 2, args);
     ASSERT(pattern_num_events(x) == 3, "euclid(3,8) produces 3 events");
@@ -350,7 +350,7 @@ static void test_transforms_leave_sorted(void) {
     int     argcnts[]  = {0, 0, 1, 0};
 
     for (int t = 0; names[t]; t++) {
-        t_telomere *x = new_telo();
+        t_primase *x = new_telo();
         x->grid = 8;
         pattern_append_event(x, 0.1f, 1.0f);
         pattern_append_event(x, 0.4f, 1.0f);
@@ -372,7 +372,7 @@ static void test_transforms_leave_sorted(void) {
 static void test_pattern_sort_requirement_documented(void) {
     /* Ensure pattern_sort is exported and callable — this is the
      * documented contract for new transform authors. */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.9f, 1.0f);
     pattern_append_event(x, 0.1f, 1.0f);
     /* Unsorted: [0.9, 0.1] */
@@ -389,7 +389,7 @@ static void test_pattern_sort_requirement_documented(void) {
 /* ------------------------------------------------------------------ */
 
 static void test_clock_follow_fields(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     ASSERT(x->clock_follow == 0, "clock_follow default 0");
     x->clock_follow = 1;
     x->clock_div = 4;
@@ -400,11 +400,11 @@ static void test_clock_follow_fields(void) {
 }
 
 static void test_clock_proxy_struct(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* Verify clock proxy fields are accessible and zero-initialized */
     ASSERT(x->clock_proxy.x == NULL, "clock_proxy.x default NULL");
     ASSERT(x->clock_inlet == NULL, "clock_inlet default NULL");
-    /* Simulate what telomere_new does: set back-pointer */
+    /* Simulate what primase_new does: set back-pointer */
     x->clock_proxy.x = x;
     ASSERT(x->clock_proxy.x == x, "clock_proxy.x back-pointer set");
     free_telo(x);
@@ -415,7 +415,7 @@ static void test_clock_proxy_struct(void) {
 /* ------------------------------------------------------------------ */
 
 static void test_set_pattern(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* Populate via set (bypass source/chain) */
     t_float positions[] = {0.25f, 0.5f, 0.75f};
     pattern_replace(x, positions, NULL, 3);
@@ -430,7 +430,7 @@ static void test_set_pattern(void) {
 }
 
 static void test_tap_at(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     source_append_event(x, 0.0f, 1.0f);
     source_append_event(x, 0.5f, 0.8f);
     ASSERT(source_num_events(x) == 2, "tap_at: source starts with 2");
@@ -447,7 +447,7 @@ static void test_tap_at(void) {
 /* ------------------------------------------------------------------ */
 
 static void test_overdub_source_grows(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* Set up a source pattern and simulate overdub */
     source_append_event(x, 0.0f, 1.0f);
     source_append_event(x, 0.5f, 1.0f);
@@ -471,7 +471,7 @@ static void test_ratio_3_2(void) {
      * Rep 0: (0+orig)/1.5 => 0/1.5=0.0, 0.25/1.5=0.167, 0.5/1.5=0.333, 0.75/1.5=0.5
      * Rep 1: (1+orig)/1.5 => 1/1.5=0.667, 1.25/1.5=0.833, 1.5/1.5=1.0(drop), 1.75/1.5=1.167(drop)
      * Result: 6 events */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.0f, 1.0f);
     pattern_append_event(x, 0.25f, 1.0f);
     pattern_append_event(x, 0.5f, 1.0f);
@@ -489,7 +489,7 @@ static void test_ratio_3_2(void) {
 
 static void test_ratio_1_2(void) {
     /* ratio 1/2 = slow by 2x: multiply positions by 2, discard >= 1.0 */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.0f, 1.0f);
     pattern_append_event(x, 0.25f, 1.0f);
     pattern_append_event(x, 0.5f, 1.0f);
@@ -508,7 +508,7 @@ static void test_ratchet(void) {
      * span = 1.0-0.5 = 0.5
      * 3 hits: 0.5, 0.5+0.167, 0.5+0.333 = 0.5, 0.667, 0.833
      * Total: 4 events [0.0, 0.5, 0.667, 0.833] */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.0f, 1.0f);
     pattern_append_event(x, 0.5f, 0.8f);
     t_float args[] = {1.0f, 3.0f};
@@ -524,7 +524,7 @@ static void test_ratchet(void) {
 static void test_accent(void) {
     /* accent period=2, amount=0.3
      * Events [0, 1, 2, 3]: indices 0,2 get +0.3 */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.0f,  0.5f);
     pattern_append_event(x, 0.25f, 0.5f);
     pattern_append_event(x, 0.5f,  0.5f);
@@ -540,7 +540,7 @@ static void test_accent(void) {
 
 static void test_drift_bounds(void) {
     /* drift with amount=0.01: all positions should remain in [0,1) */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     pattern_append_event(x, 0.0f, 1.0f);
     pattern_append_event(x, 0.5f, 1.0f);
     pattern_append_event(x, 0.99f, 1.0f);
@@ -564,7 +564,7 @@ static void test_drift_bounds(void) {
 /* ------------------------------------------------------------------ */
 
 static void test_phase_offset(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     x->phase_offset = 0.0f;
     pattern_append_event(x, 0.25f, 1.0f);
     /* With zero offset, effective pos == raw pos */
@@ -581,7 +581,7 @@ static void test_phase_offset(void) {
 /* ------------------------------------------------------------------ */
 
 static void test_scene_store_recall(void) {
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     /* Build a source pattern */
     source_append_event(x, 0.0f, 1.0f);
     source_append_event(x, 0.5f, 0.8f);
@@ -617,7 +617,7 @@ static void test_grid_aware_swing(void) {
      * Grid 8: positions 0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875
      * Odd grid indices (1,3,5,7): 0.125, 0.375, 0.625, 0.875 get swing.
      * Place events at 0.0 (grid 0, even) and 0.125 (grid 1, odd). */
-    t_telomere *x = new_telo();
+    t_primase *x = new_telo();
     x->grid = 8;
     x->swing_amt = 0.0f;
     pattern_append_event(x, 0.0f, 1.0f);
@@ -640,9 +640,9 @@ static void test_grid_aware_swing(void) {
 
 int main(void) {
     /* Register all built-in transforms so call_transform() can find them */
-    telomere_transforms_builtins_setup();
+    primase_transforms_builtins_setup();
 
-    printf("=== telomere unit tests ===\n");
+    printf("=== primase unit tests ===\n");
 
     /* Pattern API */
     printf("\n-- pattern API --\n");

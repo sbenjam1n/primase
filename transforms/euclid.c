@@ -1,7 +1,7 @@
 /* euclid.c — Replace pattern with a Euclidean rhythm distribution */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 
 /*
  * Bjorklund's algorithm: distribute k hits across n slots as evenly
@@ -52,7 +52,7 @@ static void bjorklund(int *pattern, int n, int k) {
     (void)seq; (void)seq_len; (void)counts;
 }
 
-static void transform_euclid(t_telomere *x, int argc, t_atom *argv) {
+static void transform_euclid(t_primase *x, int argc, t_atom *argv) {
     int hits = (int)atom_getfloatarg(0, argc, argv);
     int steps = (int)atom_getfloatarg(1, argc, argv);
 
@@ -78,7 +78,7 @@ static void transform_euclid(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void euclid_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("euclid"),
         transform_euclid,
         "Replace pattern with Euclidean rhythm (hits steps)",

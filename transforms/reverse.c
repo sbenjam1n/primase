@@ -1,9 +1,9 @@
 /* reverse.c — Reverse the temporal order of the pattern */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 
-static void transform_reverse(t_telomere *x, int argc, t_atom *argv) {
+static void transform_reverse(t_primase *x, int argc, t_atom *argv) {
     (void)argc; (void)argv;
 
     int n = pattern_num_events(x);
@@ -21,7 +21,7 @@ static void transform_reverse(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void reverse_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("reverse"),
         transform_reverse,
         "Reverse the temporal order of the pattern",
