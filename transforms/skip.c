@@ -1,10 +1,10 @@
 /* skip.c — Probabilistically remove events from the pattern */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 #include <stdlib.h>
 
-static void transform_skip(t_telomere *x, int argc, t_atom *argv) {
+static void transform_skip(t_primase *x, int argc, t_atom *argv) {
     int n = pattern_num_events(x);
     if (n == 0) return;
 
@@ -12,8 +12,8 @@ static void transform_skip(t_telomere *x, int argc, t_atom *argv) {
     if (prob < 0.0f) prob = 0.0f;
     if (prob > 1.0f) prob = 1.0f;
 
-    t_float survivors[TELOMERE_MAX_EVENTS];
-    t_float surv_vel[TELOMERE_MAX_EVENTS];
+    t_float survivors[PRIMASE_MAX_EVENTS];
+    t_float surv_vel[PRIMASE_MAX_EVENTS];
     int surv_count = 0;
 
     for (int i = 0; i < n; i++) {
@@ -29,7 +29,7 @@ static void transform_skip(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void skip_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("skip"),
         transform_skip,
         "Probabilistically remove events from the pattern",

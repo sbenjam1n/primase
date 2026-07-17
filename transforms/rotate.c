@@ -1,9 +1,9 @@
 /* rotate.c — Cyclically shift pattern start point by N positions */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 
-static void transform_rotate(t_telomere *x, int argc, t_atom *argv) {
+static void transform_rotate(t_primase *x, int argc, t_atom *argv) {
     int n = pattern_num_events(x);
     if (n == 0) return;
 
@@ -25,7 +25,7 @@ static void transform_rotate(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void rotate_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("rotate"),
         transform_rotate,
         "Cyclically shift pattern start point by N positions",

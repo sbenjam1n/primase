@@ -1,9 +1,9 @@
 /* slow.c — Stretch pattern by factor N (keep only 1/N of events per cycle) */
 
-#include "../telomere_transform.h"
-#include "../telomere_pattern_api.h"
+#include "../primase_transform.h"
+#include "../primase_pattern_api.h"
 
-static void transform_slow(t_telomere *x, int argc, t_atom *argv) {
+static void transform_slow(t_primase *x, int argc, t_atom *argv) {
     int n = pattern_num_events(x);
     if (n == 0) return;
 
@@ -17,8 +17,8 @@ static void transform_slow(t_telomere *x, int argc, t_atom *argv) {
      * This is the exact inverse of fast N: fast 2 doubles the density,
      * slow 2 halves it.  The surviving events are spread further apart in
      * time, so the pattern plays perceptually slower. */
-    t_float survivors[TELOMERE_MAX_EVENTS];
-    t_float surv_vel[TELOMERE_MAX_EVENTS];
+    t_float survivors[PRIMASE_MAX_EVENTS];
+    t_float surv_vel[PRIMASE_MAX_EVENTS];
     int surv_count = 0;
 
     t_float scale = (t_float)factor;
@@ -43,7 +43,7 @@ static void transform_slow(t_telomere *x, int argc, t_atom *argv) {
 }
 
 void slow_register(void) {
-    telomere_register_transform(
+    primase_register_transform(
         gensym("slow"),
         transform_slow,
         "Stretch pattern by factor N (keep only 1/N events per cycle)",

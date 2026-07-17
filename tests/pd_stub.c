@@ -1,7 +1,7 @@
 /* tests/pd_stub.c — Minimal Pd runtime stubs for unit testing.
  *
  * Provides implementations of the Pd API functions used by
- * telomere_pattern_api.c, telomere_registry.c, and the transform files,
+ * primase_pattern_api.c, primase_registry.c, and the transform files,
  * without requiring a real Pd installation or Pd headers beyond our stub.
  */
 

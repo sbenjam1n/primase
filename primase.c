@@ -1,6 +1,6 @@
-/* telomere.c — Core dispatch and lifecycle for the telomere Pd external
+/* primase.c — Core dispatch and lifecycle for the primase Pd external
  *
- * telomere records rhythmic tap-patterns as fractional positions within a
+ * primase records rhythmic tap-patterns as fractional positions within a
  * cycle (0.0–1.0) and plays them back, applying registered transforms.
  *
  * Architecture:
@@ -8,7 +8,7 @@
  *   pattern[] — derived buffer: source → chain transforms applied in order
  *   playback  — reads pattern[]
  *
- * Recording and importing write to source then call telomere_chain_eval()
+ * Recording and importing write to source then call primase_chain_eval()
  * to re-derive pattern[].  Direct transform messages (reverse, fast, etc.)
  * still mutate pattern[] directly for backward compatibility.
  */
@@ -17,30 +17,30 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include "telomere.h"
+#include "primase.h"
 
 #ifndef t_freemethod
 typedef void (*t_freemethod)(void *);
 #endif
-#include "telomere_transform.h"
-#include "telomere_pattern_api.h"
+#include "primase_transform.h"
+#include "primase_pattern_api.h"
 
-t_class *telomere_class;
-static t_class *telomere_clock_proxy_class;
+t_class *primase_class;
+static t_class *primase_clock_proxy_class;
 
 /* ------------------------------------------------------------------ */
 /* Forward declarations                                               */
 /* ------------------------------------------------------------------ */
 
-static void telomere_chain_eval(t_telomere *x);
-static void telomere_set(t_telomere *x, t_symbol *s, int argc, t_atom *argv);
-static void telomere_set_source(t_telomere *x, t_symbol *s, int argc, t_atom *argv);
+static void primase_chain_eval(t_primase *x);
+static void primase_set(t_primase *x, t_symbol *s, int argc, t_atom *argv);
+static void primase_set_source(t_primase *x, t_symbol *s, int argc, t_atom *argv);
 
 /* ------------------------------------------------------------------ */
 /* Helper: compute swing-adjusted effective position for event i      */
 /* ------------------------------------------------------------------ */
 
-static double effective_pos(t_telomere *x, int index) {
+static double effective_pos(t_primase *x, int index) {
     if (index < 0 || index >= x->num_events) return 0.0;
     double p = (double)x->pattern[index];
     /* Phase 7: apply phase offset */
@@ -64,7 +64,7 @@ static double effective_pos(t_telomere *x, int index) {
 /* Playback clock callback                                            */
 /* ------------------------------------------------------------------ */
 
-static void telomere_tick(t_telomere *x) {
+static void primase_tick(t_primase *x) {
     /* Cycle end: play_index was advanced past the last event, or the
      * scheduled cycle-boundary callback fired after the last event. */
     if (x->play_index >= x->num_events) {
@@ -184,7 +184,7 @@ static void telomere_tick(t_telomere *x) {
 /* Bang — record a tap or trigger playback (inlet 1)                 */
 /* ------------------------------------------------------------------ */
 
-static void telomere_bang(t_telomere *x) {
+static void primase_bang(t_primase *x) {
     /* Phase 4: Overdub — append tap to source during playback */
     if (x->overdub && x->playing) {
         double elapsed = clock_gettimesince(x->cycle_start_time);
@@ -209,7 +209,7 @@ static void telomere_bang(t_telomere *x) {
         }
 
         source_append_event(x, pos, vel);
-        telomere_chain_eval(x);
+        primase_chain_eval(x);
         outlet_float(x->out_count, (t_float)x->num_events);
         return;
     }
@@ -238,7 +238,7 @@ static void telomere_bang(t_telomere *x) {
         }
 
         source_append_event(x, pos, vel);
-        telomere_chain_eval(x);
+        primase_chain_eval(x);
         outlet_float(x->out_count, (t_float)x->num_events);
         return;
     }
@@ -257,7 +257,7 @@ static void telomere_bang(t_telomere *x) {
 /* Float — set tempo                                                  */
 /* ------------------------------------------------------------------ */
 
-static void telomere_float(t_telomere *x, t_float f) {
+static void primase_float(t_primase *x, t_float f) {
     if (f > 0.0f) {
         x->tempo = f;
         x->cycle_length_ms = (60000.0 / (double)f) * x->beats_per_cycle;
@@ -268,12 +268,12 @@ static void telomere_float(t_telomere *x, t_float f) {
 /* Chain evaluation                                                   */
 /* ------------------------------------------------------------------ */
 
-static void telomere_chain_eval(t_telomere *x) {
+static void primase_chain_eval(t_primase *x) {
     pattern_replace(x, x->source, x->source_vel, x->source_count);
 
     for (int i = 0; i < x->chain_len; i++) {
         if (x->chain[i].bypassed) continue;
-        t_transform_entry *entry = telomere_lookup_transform(x->chain[i].name);
+        t_transform_entry *entry = primase_lookup_transform(x->chain[i].name);
         if (!entry) continue;
         t_atom argv[4];
         for (int j = 0; j < x->chain[i].argc; j++)
@@ -286,22 +286,22 @@ static void telomere_chain_eval(t_telomere *x) {
 /* Chain management (variable-arg variants, dispatched from anything) */
 /* ------------------------------------------------------------------ */
 
-static void do_chain_add(t_telomere *x, int argc, t_atom *argv) {
+static void do_chain_add(t_primase *x, int argc, t_atom *argv) {
     if (argc < 1) {
-        pd_error(x, "telomere: chain_add requires a transform name");
+        pd_error(x, "primase: chain_add requires a transform name");
         return;
     }
     t_symbol *name = atom_getsymbolarg(0, argc, argv);
     if (!name) {
-        pd_error(x, "telomere: chain_add: first argument must be a symbol");
+        pd_error(x, "primase: chain_add: first argument must be a symbol");
         return;
     }
-    if (!telomere_lookup_transform(name)) {
-        pd_error(x, "telomere: chain_add: unknown transform '%s'", name->s_name);
+    if (!primase_lookup_transform(name)) {
+        pd_error(x, "primase: chain_add: unknown transform '%s'", name->s_name);
         return;
     }
-    if (x->chain_len >= TELOMERE_MAX_CHAIN) {
-        pd_error(x, "telomere: chain is full (max %d entries)", TELOMERE_MAX_CHAIN);
+    if (x->chain_len >= PRIMASE_MAX_CHAIN) {
+        pd_error(x, "primase: chain is full (max %d entries)", PRIMASE_MAX_CHAIN);
         return;
     }
     t_chain_entry *e = &x->chain[x->chain_len];
@@ -315,28 +315,28 @@ static void do_chain_add(t_telomere *x, int argc, t_atom *argv) {
         e->argc++;
     }
     x->chain_len++;
-    telomere_chain_eval(x);
-    post("telomere: chain[%d] = %s", x->chain_len - 1, name->s_name);
+    primase_chain_eval(x);
+    post("primase: chain[%d] = %s", x->chain_len - 1, name->s_name);
 }
 
-static void do_chain_replace(t_telomere *x, int argc, t_atom *argv) {
+static void do_chain_replace(t_primase *x, int argc, t_atom *argv) {
     if (argc < 2) {
-        pd_error(x, "telomere: chain_replace: requires <index> <transform> [args...]");
+        pd_error(x, "primase: chain_replace: requires <index> <transform> [args...]");
         return;
     }
     int idx = (int)atom_getfloatarg(0, argc, argv);
     t_symbol *name = atom_getsymbolarg(1, argc, argv);
     if (!name) {
-        pd_error(x, "telomere: chain_replace: second argument must be a symbol");
+        pd_error(x, "primase: chain_replace: second argument must be a symbol");
         return;
     }
     if (idx < 0 || idx >= x->chain_len) {
-        pd_error(x, "telomere: chain_replace: index %d out of range (len=%d)",
+        pd_error(x, "primase: chain_replace: index %d out of range (len=%d)",
                  idx, x->chain_len);
         return;
     }
-    if (!telomere_lookup_transform(name)) {
-        pd_error(x, "telomere: chain_replace: unknown transform '%s'", name->s_name);
+    if (!primase_lookup_transform(name)) {
+        pd_error(x, "primase: chain_replace: unknown transform '%s'", name->s_name);
         return;
     }
     t_chain_entry *e = &x->chain[idx];
@@ -349,44 +349,44 @@ static void do_chain_replace(t_telomere *x, int argc, t_atom *argv) {
         e->argv[e->argc] = atom_getfloatarg(i + 2, argc, argv);
         e->argc++;
     }
-    telomere_chain_eval(x);
+    primase_chain_eval(x);
 }
 
 /* ------------------------------------------------------------------ */
 /* Chain management (fixed-arg variants, registered with class_addmethod) */
 /* ------------------------------------------------------------------ */
 
-static void telomere_chain_remove(t_telomere *x, t_float fidx) {
+static void primase_chain_remove(t_primase *x, t_float fidx) {
     int idx = (int)fidx;
     if (idx < 0 || idx >= x->chain_len) {
-        pd_error(x, "telomere: chain_remove: index %d out of range (len=%d)",
+        pd_error(x, "primase: chain_remove: index %d out of range (len=%d)",
                  idx, x->chain_len);
         return;
     }
     for (int i = idx; i < x->chain_len - 1; i++)
         x->chain[i] = x->chain[i + 1];
     x->chain_len--;
-    telomere_chain_eval(x);
+    primase_chain_eval(x);
 }
 
-static void telomere_chain_clear(t_telomere *x) {
+static void primase_chain_clear(t_primase *x) {
     x->chain_len = 0;
-    telomere_chain_eval(x);
+    primase_chain_eval(x);
 }
 
-static void telomere_chain_bypass(t_telomere *x, t_float fidx, t_float fbypass) {
+static void primase_chain_bypass(t_primase *x, t_float fidx, t_float fbypass) {
     int idx = (int)fidx;
     if (idx < 0 || idx >= x->chain_len) {
-        pd_error(x, "telomere: chain_bypass: index %d out of range (len=%d)",
+        pd_error(x, "primase: chain_bypass: index %d out of range (len=%d)",
                  idx, x->chain_len);
         return;
     }
     x->chain[idx].bypassed = (fbypass != 0.0f) ? 1 : 0;
-    telomere_chain_eval(x);
+    primase_chain_eval(x);
 }
 
-static void telomere_chain_dump(t_telomere *x) {
-    post("telomere: chain (%d entr%s):", x->chain_len,
+static void primase_chain_dump(t_primase *x) {
+    post("primase: chain (%d entr%s):", x->chain_len,
          x->chain_len == 1 ? "y" : "ies");
     for (int i = 0; i < x->chain_len; i++) {
         char args[64] = "";
@@ -407,22 +407,22 @@ static void telomere_chain_dump(t_telomere *x) {
 /* Message dispatch — chain variable-arg messages then transform reg  */
 /* ------------------------------------------------------------------ */
 
-static void telomere_anything(t_telomere *x, t_symbol *s, int argc, t_atom *argv) {
+static void primase_anything(t_primase *x, t_symbol *s, int argc, t_atom *argv) {
     const char *n = s->s_name;
 
     if (strcmp(n, "chain_add")     == 0) { do_chain_add(x, argc, argv);     return; }
     if (strcmp(n, "chain_replace") == 0) { do_chain_replace(x, argc, argv); return; }
-    if (strcmp(n, "set")           == 0) { telomere_set(x, s, argc, argv);  return; }
-    if (strcmp(n, "set_source")    == 0) { telomere_set_source(x, s, argc, argv); return; }
+    if (strcmp(n, "set")           == 0) { primase_set(x, s, argc, argv);  return; }
+    if (strcmp(n, "set_source")    == 0) { primase_set_source(x, s, argc, argv); return; }
 
-    t_transform_entry *entry = telomere_lookup_transform(s);
+    t_transform_entry *entry = primase_lookup_transform(s);
     if (!entry) {
-        pd_error(x, "telomere: unknown message '%s'", s->s_name);
+        pd_error(x, "primase: unknown message '%s'", s->s_name);
         return;
     }
     if (argc < entry->min_args ||
         (entry->max_args >= 0 && argc > entry->max_args)) {
-        pd_error(x, "telomere: '%s' expects %d-%d args, got %d",
+        pd_error(x, "primase: '%s' expects %d-%d args, got %d",
                  s->s_name, entry->min_args,
                  entry->max_args < 0 ? 999 : entry->max_args, argc);
         return;
@@ -434,7 +434,7 @@ static void telomere_anything(t_telomere *x, t_symbol *s, int argc, t_atom *argv
 /* Built-in messages                                                  */
 /* ------------------------------------------------------------------ */
 
-static void telomere_record(t_telomere *x) {
+static void primase_record(t_primase *x) {
     if (x->playing) {
         /* Arm: start recording at next cycle boundary */
         x->armed = 1;
@@ -448,41 +448,41 @@ static void telomere_record(t_telomere *x) {
     outlet_float(x->out_status, 1.0f);
 }
 
-static void telomere_clear(t_telomere *x) {
+static void primase_clear(t_primase *x) {
     source_clear(x);
-    telomere_chain_eval(x);
+    primase_chain_eval(x);
     outlet_float(x->out_count, 0.0f);
 }
 
-static void telomere_quantize(t_telomere *x, t_float pct) {
+static void primase_quantize(t_primase *x, t_float pct) {
     if (pct < 0.0f) pct = 0.0f;
     if (pct > 1.0f) pct = 1.0f;
     x->quantize_pct = pct;
 }
 
-static void telomere_grid(t_telomere *x, t_float g) {
+static void primase_grid(t_primase *x, t_float g) {
     int gi = (int)g;
     if (gi < 1) gi = 1;
     if (gi > 128) gi = 128;
     x->grid = gi;
 }
 
-static void telomere_jitter(t_telomere *x, t_float amt) {
+static void primase_jitter(t_primase *x, t_float amt) {
     if (amt < 0.0f) amt = 0.0f;
     if (amt > 1.0f) amt = 1.0f;
     x->jitter_amt = amt;
 }
 
-static void telomere_skip(t_telomere *x, t_float prob) {
+static void primase_skip(t_primase *x, t_float prob) {
     if (prob < 0.0f) prob = 0.0f;
     if (prob > 1.0f) prob = 1.0f;
     x->skip_prob = prob;
 }
 
-static void telomere_skipweight(t_telomere *x, t_float fidx, t_float fw) {
+static void primase_skipweight(t_primase *x, t_float fidx, t_float fw) {
     int idx = (int)fidx;
     if (idx < 0 || idx >= x->num_events) {
-        pd_error(x, "telomere: skipweight: index %d out of range (count=%d)",
+        pd_error(x, "primase: skipweight: index %d out of range (count=%d)",
                  idx, x->num_events);
         return;
     }
@@ -491,29 +491,29 @@ static void telomere_skipweight(t_telomere *x, t_float fidx, t_float fw) {
     x->skip_weight[idx] = fw;
 }
 
-static void telomere_swing(t_telomere *x, t_float amt) {
+static void primase_swing(t_primase *x, t_float amt) {
     if (amt < -0.5f) amt = -0.5f;
     if (amt >  0.5f) amt =  0.5f;
     x->swing_amt = amt;
 }
 
-static void telomere_loop(t_telomere *x, t_float f) {
+static void primase_loop(t_primase *x, t_float f) {
     x->loop = (f != 0.0f) ? 1 : 0;
 }
 
-static void telomere_sync(t_telomere *x, t_float f) {
+static void primase_sync(t_primase *x, t_float f) {
     x->sync_mode = (f != 0.0f) ? 1 : 0;
 }
 
-static void telomere_beats(t_telomere *x, t_float b) {
+static void primase_beats(t_primase *x, t_float b) {
     int bi = (int)b;
     if (bi < 1) bi = 1;
     x->beats_per_cycle = bi;
     x->cycle_length_ms = (60000.0 / (double)x->tempo) * bi;
 }
 
-static void telomere_dump(t_telomere *x) {
-    post("telomere: %d events (source=%d chain=%d) tempo=%.1f grid=%d q=%.2f",
+static void primase_dump(t_primase *x) {
+    post("primase: %d events (source=%d chain=%d) tempo=%.1f grid=%d q=%.2f",
          x->num_events, x->source_count, x->chain_len,
          x->tempo, x->grid, x->quantize_pct);
     for (int i = 0; i < x->num_events; i++) {
@@ -542,22 +542,22 @@ static void make_filepath(char *out, size_t sz, t_symbol *sym) {
     out[sz - 1] = '\0';
 }
 
-static void telomere_write(t_telomere *x, t_symbol *sym) {
+static void primase_write(t_primase *x, t_symbol *sym) {
     char path[4096];
     make_filepath(path, sizeof(path), sym);
     FILE *f = fopen(path, "w");
-    if (!f) { pd_error(x, "telomere: write: cannot open '%s'", path); return; }
+    if (!f) { pd_error(x, "primase: write: cannot open '%s'", path); return; }
     for (int i = 0; i < x->num_events; i++)
         fprintf(f, "%.9g %.9g\n", x->pattern[i], x->velocity[i]);
     fclose(f);
-    post("telomere: wrote %d events to '%s'", x->num_events, path);
+    post("primase: wrote %d events to '%s'", x->num_events, path);
 }
 
-static void telomere_read(t_telomere *x, t_symbol *sym) {
+static void primase_read(t_primase *x, t_symbol *sym) {
     char path[4096];
     make_filepath(path, sizeof(path), sym);
     FILE *f = fopen(path, "r");
-    if (!f) { pd_error(x, "telomere: read: cannot open '%s'", path); return; }
+    if (!f) { pd_error(x, "primase: read: cannot open '%s'", path); return; }
 
     source_clear(x);
     float pos, vel;
@@ -574,9 +574,9 @@ static void telomere_read(t_telomere *x, t_symbol *sym) {
         }
     }
     fclose(f);
-    post("telomere: read %d events from '%s'", loaded, path);
+    post("primase: read %d events from '%s'", loaded, path);
 
-    telomere_chain_eval(x);
+    primase_chain_eval(x);
 
     if (x->playing && x->num_events > 0) {
         x->play_index = 0;
@@ -593,7 +593,7 @@ static void telomere_read(t_telomere *x, t_symbol *sym) {
     }
 }
 
-static void telomere_play(t_telomere *x) {
+static void primase_play(t_primase *x) {
     if (x->num_events == 0) return;
     x->play_index = 0;
     x->playing    = 1;
@@ -603,16 +603,16 @@ static void telomere_play(t_telomere *x) {
     clock_delay(x->playback_clock, delay);
 }
 
-static void telomere_metric(t_telomere *x, t_float num, t_float den) {
+static void primase_metric(t_primase *x, t_float num, t_float den) {
     if (num <= 0.0f || den <= 0.0f) {
-        pd_error(x, "telomere: metric ratio must be positive (got %g:%g)", num, den);
+        pd_error(x, "primase: metric ratio must be positive (got %g:%g)", num, den);
         return;
     }
     x->metric_num = num;
     x->metric_den = den;
 }
 
-static void telomere_stop(t_telomere *x) {
+static void primase_stop(t_primase *x) {
     x->armed = 0;
     x->overdub = 0;
     if (x->recording) {
@@ -626,16 +626,16 @@ static void telomere_stop(t_telomere *x) {
     }
 }
 
-static void telomere_tempo(t_telomere *x, t_float f) {
+static void primase_tempo(t_primase *x, t_float f) {
     if (f > 0.0f) {
         x->tempo = f;
         x->cycle_length_ms = (60000.0 / (double)f) * x->beats_per_cycle;
     }
 }
 
-static void telomere_help_msg(t_telomere *x) {
-    post("telomere -- available transforms:");
-    t_transform_entry *cur = telomere_get_registry_head();
+static void primase_help_msg(t_primase *x) {
+    post("primase -- available transforms:");
+    t_transform_entry *cur = primase_get_registry_head();
     while (cur) {
         post("  %-16s  args: %d-%d  %s",
              cur->name->s_name, cur->min_args,
@@ -674,7 +674,7 @@ static void telomere_help_msg(t_telomere *x) {
 /* Phase 1: Clock following messages                                  */
 /* ------------------------------------------------------------------ */
 
-static void telomere_clockfollow(t_telomere *x, t_float f) {
+static void primase_clockfollow(t_primase *x, t_float f) {
     x->clock_follow = (f != 0.0f) ? 1 : 0;
     if (x->clock_follow) {
         x->last_bang_time = 0.0;
@@ -682,7 +682,7 @@ static void telomere_clockfollow(t_telomere *x, t_float f) {
     }
 }
 
-static void telomere_clockdiv(t_telomere *x, t_float f) {
+static void primase_clockdiv(t_primase *x, t_float f) {
     int d = (int)f;
     if (d < 1) d = 1;
     x->clock_div = d;
@@ -693,28 +693,28 @@ static void telomere_clockdiv(t_telomere *x, t_float f) {
 /* Phase 2: State output query handlers                               */
 /* ------------------------------------------------------------------ */
 
-static void telomere_getpattern(t_telomere *x) {
-    t_atom argv[TELOMERE_MAX_EVENTS];
+static void primase_getpattern(t_primase *x) {
+    t_atom argv[PRIMASE_MAX_EVENTS];
     for (int i = 0; i < x->num_events; i++)
         SETFLOAT(&argv[i], x->pattern[i]);
     outlet_anything(x->out_state, gensym("pattern"), x->num_events, argv);
 }
 
-static void telomere_getvelocity(t_telomere *x) {
-    t_atom argv[TELOMERE_MAX_EVENTS];
+static void primase_getvelocity(t_primase *x) {
+    t_atom argv[PRIMASE_MAX_EVENTS];
     for (int i = 0; i < x->num_events; i++)
         SETFLOAT(&argv[i], x->velocity[i]);
     outlet_anything(x->out_state, gensym("velocity"), x->num_events, argv);
 }
 
-static void telomere_getsource(t_telomere *x) {
-    t_atom argv[TELOMERE_MAX_EVENTS];
+static void primase_getsource(t_primase *x) {
+    t_atom argv[PRIMASE_MAX_EVENTS];
     for (int i = 0; i < x->source_count; i++)
         SETFLOAT(&argv[i], x->source[i]);
     outlet_anything(x->out_state, gensym("source"), x->source_count, argv);
 }
 
-static void telomere_getparams(t_telomere *x) {
+static void primase_getparams(t_primase *x) {
     t_atom a[1];
     SETFLOAT(&a[0], (t_float)x->playing);
     outlet_anything(x->out_state, gensym("playing"), 1, a);
@@ -744,7 +744,7 @@ static void telomere_getparams(t_telomere *x) {
     outlet_anything(x->out_state, gensym("clockfollow"), 1, a);
 }
 
-static void telomere_getchain(t_telomere *x) {
+static void primase_getchain(t_primase *x) {
     for (int i = 0; i < x->chain_len; i++) {
         t_atom argv[6]; /* index + name + up to 4 args */
         int ac = 0;
@@ -760,11 +760,11 @@ static void telomere_getchain(t_telomere *x) {
 /* Phase 3: Pattern I/O                                               */
 /* ------------------------------------------------------------------ */
 
-static void telomere_set(t_telomere *x, t_symbol *s, int argc, t_atom *argv) {
+static void primase_set(t_primase *x, t_symbol *s, int argc, t_atom *argv) {
     (void)s;
     if (argc == 0) return;
-    if (argc > TELOMERE_MAX_EVENTS) argc = TELOMERE_MAX_EVENTS;
-    t_float pos[TELOMERE_MAX_EVENTS];
+    if (argc > PRIMASE_MAX_EVENTS) argc = PRIMASE_MAX_EVENTS;
+    t_float pos[PRIMASE_MAX_EVENTS];
     for (int i = 0; i < argc; i++)
         pos[i] = atom_getfloatarg(i, argc, argv);
     pattern_replace(x, pos, NULL, argc);
@@ -772,22 +772,22 @@ static void telomere_set(t_telomere *x, t_symbol *s, int argc, t_atom *argv) {
     outlet_float(x->out_count, (t_float)x->num_events);
 }
 
-static void telomere_set_source(t_telomere *x, t_symbol *s, int argc, t_atom *argv) {
+static void primase_set_source(t_primase *x, t_symbol *s, int argc, t_atom *argv) {
     (void)s;
     if (argc == 0) return;
-    if (argc > TELOMERE_MAX_EVENTS) argc = TELOMERE_MAX_EVENTS;
-    t_float pos[TELOMERE_MAX_EVENTS];
+    if (argc > PRIMASE_MAX_EVENTS) argc = PRIMASE_MAX_EVENTS;
+    t_float pos[PRIMASE_MAX_EVENTS];
     for (int i = 0; i < argc; i++)
         pos[i] = atom_getfloatarg(i, argc, argv);
     source_replace(x, pos, NULL, argc);
-    telomere_chain_eval(x);
+    primase_chain_eval(x);
     outlet_float(x->out_count, (t_float)x->num_events);
 }
 
-static void telomere_tap_at(t_telomere *x, t_float pos, t_float vel) {
+static void primase_tap_at(t_primase *x, t_float pos, t_float vel) {
     if (vel == 0.0f) vel = x->current_velocity;
     source_append_event(x, pos, vel);
-    telomere_chain_eval(x);
+    primase_chain_eval(x);
     outlet_float(x->out_count, (t_float)x->num_events);
 }
 
@@ -795,9 +795,9 @@ static void telomere_tap_at(t_telomere *x, t_float pos, t_float vel) {
 /* Phase 4: Overdub + Transparent                                     */
 /* ------------------------------------------------------------------ */
 
-static void telomere_overdub(t_telomere *x) {
+static void primase_overdub(t_primase *x) {
     if (!x->playing) {
-        pd_error(x, "telomere: overdub requires active playback");
+        pd_error(x, "primase: overdub requires active playback");
         return;
     }
     x->overdub = 1;
@@ -805,7 +805,7 @@ static void telomere_overdub(t_telomere *x) {
     outlet_float(x->out_status, 3.0f);  /* 3 = overdub */
 }
 
-static void telomere_transparent(t_telomere *x, t_float f) {
+static void primase_transparent(t_primase *x, t_float f) {
     x->transparent = (f != 0.0f) ? 1 : 0;
 }
 
@@ -813,7 +813,7 @@ static void telomere_transparent(t_telomere *x, t_float f) {
 /* Phase 7: Phase offset                                              */
 /* ------------------------------------------------------------------ */
 
-static void telomere_phase(t_telomere *x, t_float f) {
+static void primase_phase(t_primase *x, t_float f) {
     if (f < 0.0f) f = 0.0f;
     if (f > 1.0f) f = 1.0f;
     x->phase_offset = f;
@@ -823,11 +823,11 @@ static void telomere_phase(t_telomere *x, t_float f) {
 /* Phase 8: Scene memory                                              */
 /* ------------------------------------------------------------------ */
 
-static void telomere_store(t_telomere *x, t_float fslot) {
+static void primase_store(t_primase *x, t_float fslot) {
     int slot = (int)fslot;
-    if (slot < 0 || slot >= TELOMERE_MAX_SCENES) {
-        pd_error(x, "telomere: store: slot %d out of range (0-%d)",
-                 slot, TELOMERE_MAX_SCENES - 1);
+    if (slot < 0 || slot >= PRIMASE_MAX_SCENES) {
+        pd_error(x, "primase: store: slot %d out of range (0-%d)",
+                 slot, PRIMASE_MAX_SCENES - 1);
         return;
     }
     t_scene *sc = &x->scenes[slot];
@@ -837,26 +837,26 @@ static void telomere_store(t_telomere *x, t_float fslot) {
     memcpy(sc->chain, x->chain, x->chain_len * sizeof(t_chain_entry));
     sc->chain_len = x->chain_len;
     sc->occupied = 1;
-    post("telomere: stored to scene %d (%d events, %d chain entries)",
+    post("primase: stored to scene %d (%d events, %d chain entries)",
          slot, sc->source_count, sc->chain_len);
 }
 
-static void telomere_recall(t_telomere *x, t_float fslot) {
+static void primase_recall(t_primase *x, t_float fslot) {
     int slot = (int)fslot;
-    if (slot < 0 || slot >= TELOMERE_MAX_SCENES) {
-        pd_error(x, "telomere: recall: slot %d out of range (0-%d)",
-                 slot, TELOMERE_MAX_SCENES - 1);
+    if (slot < 0 || slot >= PRIMASE_MAX_SCENES) {
+        pd_error(x, "primase: recall: slot %d out of range (0-%d)",
+                 slot, PRIMASE_MAX_SCENES - 1);
         return;
     }
     t_scene *sc = &x->scenes[slot];
     if (!sc->occupied) {
-        pd_error(x, "telomere: recall: scene %d is empty", slot);
+        pd_error(x, "primase: recall: scene %d is empty", slot);
         return;
     }
     source_replace(x, sc->source, sc->source_vel, sc->source_count);
     memcpy(x->chain, sc->chain, sc->chain_len * sizeof(t_chain_entry));
     x->chain_len = sc->chain_len;
-    telomere_chain_eval(x);
+    primase_chain_eval(x);
 
     if (x->playing && x->num_events > 0) {
         x->play_index = 0;
@@ -867,7 +867,7 @@ static void telomere_recall(t_telomere *x, t_float fslot) {
         clock_delay(x->playback_clock, delay);
     }
     outlet_float(x->out_count, (t_float)x->num_events);
-    post("telomere: recalled scene %d (%d events, %d chain entries)",
+    post("primase: recalled scene %d (%d events, %d chain entries)",
          slot, x->source_count, x->chain_len);
 }
 
@@ -875,8 +875,8 @@ static void telomere_recall(t_telomere *x, t_float fslot) {
 /* Clock proxy bang handler (inlet 2)                                 */
 /* ------------------------------------------------------------------ */
 
-static void telomere_clock_proxy_bang(t_telomere_clock_proxy *p) {
-    t_telomere *x = p->x;
+static void primase_clock_proxy_bang(t_primase_clock_proxy *p) {
+    t_primase *x = p->x;
 
     /* Clock following — derive tempo from bang intervals */
     if (x->clock_follow && x->playing) {
@@ -932,8 +932,8 @@ static void telomere_clock_proxy_bang(t_telomere_clock_proxy *p) {
 /* Constructor / Destructor                                           */
 /* ------------------------------------------------------------------ */
 
-static void *telomere_new(t_float tempo) {
-    t_telomere *x = (t_telomere *)pd_new(telomere_class);
+static void *primase_new(t_float tempo) {
+    t_primase *x = (t_primase *)pd_new(primase_class);
 
     /* Derived pattern storage */
     x->pattern_alloc = 32;
@@ -959,10 +959,10 @@ static void *telomere_new(t_float tempo) {
 
     /* Quantization */
     x->quantize_pct = 0.0f;
-    x->grid         = TELOMERE_DEFAULT_GRID;
+    x->grid         = PRIMASE_DEFAULT_GRID;
 
     /* Clock */
-    x->tempo            = (tempo > 0.0f) ? tempo : TELOMERE_DEFAULT_TEMPO;
+    x->tempo            = (tempo > 0.0f) ? tempo : PRIMASE_DEFAULT_TEMPO;
     x->beats_per_cycle  = 4;
     x->cycle_length_ms  = (60000.0 / (double)x->tempo) * x->beats_per_cycle;
     x->cycle_start_time = 0.0;
@@ -1011,11 +1011,11 @@ static void *telomere_new(t_float tempo) {
     x->out_status   = outlet_new(&x->x_obj, gensym("float"));
     x->out_state    = outlet_new(&x->x_obj, &s_list);
 
-    x->playback_clock = clock_new(x, (t_method)telomere_tick);
+    x->playback_clock = clock_new(x, (t_method)primase_tick);
 
     /* Inlet 2: clock proxy (dedicated clock/sync inlet) */
     x->clock_proxy.x = x;
-    x->clock_proxy.pd = telomere_clock_proxy_class;
+    x->clock_proxy.pd = primase_clock_proxy_class;
     x->clock_inlet = inlet_new(&x->x_obj, &x->clock_proxy.pd, 0, 0);
 
     /* Inlet 3: velocity */
@@ -1034,7 +1034,7 @@ static void *telomere_new(t_float tempo) {
     return x;
 }
 
-static void telomere_free(t_telomere *x) {
+static void primase_free(t_primase *x) {
     clock_free(x->playback_clock);
     if (x->pattern)
         freebytes(x->pattern,     x->pattern_alloc * sizeof(t_float));
@@ -1054,114 +1054,114 @@ static void telomere_free(t_telomere *x) {
 /* Setup                                                              */
 /* ------------------------------------------------------------------ */
 
-EXTERN void telomere_setup(void) {
+EXTERN void primase_setup(void) {
     /* Clock proxy class for dedicated clock inlet */
-    telomere_clock_proxy_class = class_new(gensym("telomere_clock_proxy"),
-        0, 0, sizeof(t_telomere_clock_proxy), CLASS_PD, 0);
-    class_addbang(telomere_clock_proxy_class,
-        (t_method)telomere_clock_proxy_bang);
+    primase_clock_proxy_class = class_new(gensym("primase_clock_proxy"),
+        0, 0, sizeof(t_primase_clock_proxy), CLASS_PD, 0);
+    class_addbang(primase_clock_proxy_class,
+        (t_method)primase_clock_proxy_bang);
 
-    telomere_class = class_new(
-        gensym("telomere"),
-        (t_newmethod)telomere_new,
-        (t_freemethod)telomere_free,
-        sizeof(t_telomere),
+    primase_class = class_new(
+        gensym("primase"),
+        (t_newmethod)primase_new,
+        (t_freemethod)primase_free,
+        sizeof(t_primase),
         CLASS_DEFAULT,
         A_DEFFLOAT, 0
     );
 
-    class_addbang   (telomere_class, (t_method)telomere_bang);
-    class_addfloat  (telomere_class, (t_method)telomere_float);
-    class_addanything(telomere_class, (t_method)telomere_anything);
+    class_addbang   (primase_class, (t_method)primase_bang);
+    class_addfloat  (primase_class, (t_method)primase_float);
+    class_addanything(primase_class, (t_method)primase_anything);
 
-    class_addmethod(telomere_class, (t_method)telomere_record,
+    class_addmethod(primase_class, (t_method)primase_record,
                     gensym("record"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_stop,
+    class_addmethod(primase_class, (t_method)primase_stop,
                     gensym("stop"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_play,
+    class_addmethod(primase_class, (t_method)primase_play,
                     gensym("play"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_loop,
+    class_addmethod(primase_class, (t_method)primase_loop,
                     gensym("loop"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_sync,
+    class_addmethod(primase_class, (t_method)primase_sync,
                     gensym("sync"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_clear,
+    class_addmethod(primase_class, (t_method)primase_clear,
                     gensym("clear"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_quantize,
+    class_addmethod(primase_class, (t_method)primase_quantize,
                     gensym("quantize"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_grid,
+    class_addmethod(primase_class, (t_method)primase_grid,
                     gensym("grid"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_jitter,
+    class_addmethod(primase_class, (t_method)primase_jitter,
                     gensym("jitter"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_skip,
+    class_addmethod(primase_class, (t_method)primase_skip,
                     gensym("skip"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_skipweight,
+    class_addmethod(primase_class, (t_method)primase_skipweight,
                     gensym("skipweight"), A_FLOAT, A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_swing,
+    class_addmethod(primase_class, (t_method)primase_swing,
                     gensym("swing"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_beats,
+    class_addmethod(primase_class, (t_method)primase_beats,
                     gensym("beats"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_tempo,
+    class_addmethod(primase_class, (t_method)primase_tempo,
                     gensym("tempo"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_metric,
+    class_addmethod(primase_class, (t_method)primase_metric,
                     gensym("metric"), A_FLOAT, A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_dump,
+    class_addmethod(primase_class, (t_method)primase_dump,
                     gensym("dump"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_write,
+    class_addmethod(primase_class, (t_method)primase_write,
                     gensym("write"), A_SYMBOL, 0);
-    class_addmethod(telomere_class, (t_method)telomere_read,
+    class_addmethod(primase_class, (t_method)primase_read,
                     gensym("read"), A_SYMBOL, 0);
-    class_addmethod(telomere_class, (t_method)telomere_help_msg,
+    class_addmethod(primase_class, (t_method)primase_help_msg,
                     gensym("help"), 0);
 
     /* Phase 1: Clock following */
-    class_addmethod(telomere_class, (t_method)telomere_clockfollow,
+    class_addmethod(primase_class, (t_method)primase_clockfollow,
                     gensym("clockfollow"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_clockdiv,
+    class_addmethod(primase_class, (t_method)primase_clockdiv,
                     gensym("clockdiv"), A_DEFFLOAT, 0);
 
     /* Phase 2: State output */
-    class_addmethod(telomere_class, (t_method)telomere_getpattern,
+    class_addmethod(primase_class, (t_method)primase_getpattern,
                     gensym("getpattern"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_getvelocity,
+    class_addmethod(primase_class, (t_method)primase_getvelocity,
                     gensym("getvelocity"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_getsource,
+    class_addmethod(primase_class, (t_method)primase_getsource,
                     gensym("getsource"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_getparams,
+    class_addmethod(primase_class, (t_method)primase_getparams,
                     gensym("getparams"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_getchain,
+    class_addmethod(primase_class, (t_method)primase_getchain,
                     gensym("getchain"), 0);
 
     /* Phase 3: Pattern I/O (set/set_source via anything; tap_at here) */
-    class_addmethod(telomere_class, (t_method)telomere_tap_at,
+    class_addmethod(primase_class, (t_method)primase_tap_at,
                     gensym("tap_at"), A_FLOAT, A_DEFFLOAT, 0);
 
     /* Phase 4: Overdub + transparent */
-    class_addmethod(telomere_class, (t_method)telomere_overdub,
+    class_addmethod(primase_class, (t_method)primase_overdub,
                     gensym("overdub"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_transparent,
+    class_addmethod(primase_class, (t_method)primase_transparent,
                     gensym("transparent"), A_DEFFLOAT, 0);
 
     /* Phase 7: Phase offset */
-    class_addmethod(telomere_class, (t_method)telomere_phase,
+    class_addmethod(primase_class, (t_method)primase_phase,
                     gensym("phase"), A_DEFFLOAT, 0);
 
     /* Phase 8: Scene memory */
-    class_addmethod(telomere_class, (t_method)telomere_store,
+    class_addmethod(primase_class, (t_method)primase_store,
                     gensym("store"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_recall,
+    class_addmethod(primase_class, (t_method)primase_recall,
                     gensym("recall"), A_DEFFLOAT, 0);
 
     /* Chain management — fixed-arg variants */
-    class_addmethod(telomere_class, (t_method)telomere_chain_remove,
+    class_addmethod(primase_class, (t_method)primase_chain_remove,
                     gensym("chain_remove"), A_DEFFLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_chain_clear,
+    class_addmethod(primase_class, (t_method)primase_chain_clear,
                     gensym("chain_clear"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_chain_bypass,
+    class_addmethod(primase_class, (t_method)primase_chain_bypass,
                     gensym("chain_bypass"), A_FLOAT, A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_chain_dump,
+    class_addmethod(primase_class, (t_method)primase_chain_dump,
                     gensym("chain_dump"), 0);
 
-    telomere_transforms_builtins_setup();
+    primase_transforms_builtins_setup();
 
-    post("telomere: tap-pattern sequencer loaded");
+    post("primase: tap-pattern sequencer loaded");
 }

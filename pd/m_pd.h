@@ -1,5 +1,5 @@
 /* ----------------------------------------------------------------
- * Minimal Pure Data header stub for building telomere.
+ * Minimal Pure Data header stub for building primase.
  *
  * Provides type definitions and EXTERN declarations compatible
  * with the real m_pd.h.  All Pd runtime functions are declared
@@ -79,7 +79,7 @@ static inline t_symbol *atom_getsymbolarg(int which, int argc, const t_atom *arg
 /*
  * These structs MUST match vanilla Pd's layout exactly, because
  * t_object is embedded as the first member of every external's struct
- * and sizeof(t_telomere) is passed to class_new.  A size mismatch
+ * and sizeof(t_primase) is passed to class_new.  A size mismatch
  * causes Pd's internal writes (outlet/inlet pointers, etc.) to land
  * on the external's own fields → heap corruption → SIGSEGV.
  */

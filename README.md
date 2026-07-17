@@ -1,6 +1,6 @@
-# telomere
+# primase
 
-telomere~ is a pattern replicator and cyclic mutation external for Pure Data. 
+primase~ is a pattern replicator and cyclic mutation external for Pure Data. 
 
 ## Features
 
@@ -15,7 +15,7 @@ telomere~ is a pattern replicator and cyclic mutation external for Pure Data.
 - **Per-event skip weight** — independent skip probability per event for compositional variation
 - **Metric modulation** — smooth tempo transitions between related meters
 - **Extensible architecture** — add new transforms without modifying core code
-- **OSC control** — full remote control via Open Sound Control (39 endpoints across 8 categories) using `[telomere-osc]` abstraction
+- **OSC control** — full remote control via Open Sound Control (39 endpoints across 8 categories) using `[primase-osc]` abstraction
 
 ## Building
 
@@ -29,7 +29,7 @@ make test_unit                    # build and run standalone unit tests (110 ass
 make clean                        # remove build artifacts
 ```
 
-The output binary is `telomere.pd_linux` on Linux or `telomere.pd_darwin` on macOS.
+The output binary is `primase.pd_linux` on Linux or `primase.pd_darwin` on macOS.
 
 ## Installation
 
@@ -37,7 +37,7 @@ Copy the compiled binary into your Pd search path or into the same directory as 
 
 ## Usage
 
-Create a `[telomere]` object in your Pd patch. An optional float argument sets the initial tempo: `[telomere 120]`.
+Create a `[primase]` object in your Pd patch. An optional float argument sets the initial tempo: `[primase 120]`.
 
 **Inlets (left to right):**
 1. `bang` — tap event during recording / trigger playback; `float` — set tempo; messages — all commands
@@ -138,7 +138,7 @@ sync 0          disable (bangs on inlet 2 are ignored)
 
 `clockfollow 1` enables clock-following mode. Bangs on inlet 2 are used to derive tempo from inter-bang intervals.
 
-Connect any periodic bang source — `[metro]`, a MIDI clock divider, a tap-tempo output — to **inlet 2** to lock the pattern's cycle boundary to that source. Since the reset is hard (not tempo-tracking), telomere's internal event spacing still follows its own tempo; `sync` only eliminates drift at the cycle boundary.
+Connect any periodic bang source — `[metro]`, a MIDI clock divider, a tap-tempo output — to **inlet 2** to lock the pattern's cycle boundary to that source. Since the reset is hard (not tempo-tracking), primase's internal event spacing still follows its own tempo; `sync` only eliminates drift at the cycle boundary.
 
 Typical setup:
 
@@ -147,47 +147,47 @@ Typical setup:
      |
      |  [sync 1(         ← sent once to inlet 1 to enable sync mode
      |       |
-[telomere 120]           ← metro connects to inlet 2 (clock)
+[primase 120]           ← metro connects to inlet 2 (clock)
 ```
 
 Every time the metro fires on inlet 2, the pattern restarts from the top. Taps on inlet 1 can still record while the clock runs. Drift across bars is zero regardless of how many cycles have passed.
 
 ### OSC control
 
-The `telomere-osc` abstraction provides full remote control via Open Sound Control. Requires the mrpeach library.
+The `primase-osc` abstraction provides full remote control via Open Sound Control. Requires the mrpeach library.
 
 ```
-[telomere-osc 9001]   ← create with UDP port number
+[primase-osc 9001]   ← create with UDP port number
         |
-   [telomere 120]     ← connect outlet to telomere inlet
+   [primase 120]     ← connect outlet to primase inlet
 ```
 
-OSC address scheme: `/telomere/<category>/<parameter>`
+OSC address scheme: `/primase/<category>/<parameter>`
 
-Categories: `/transport`, `/tempo`, `/pattern`, `/variation`, `/chain`, `/scene`, `/file`, `/query` (39 endpoints total). See `telomere-osc-help.pd` for the complete reference.
+Categories: `/transport`, `/tempo`, `/pattern`, `/variation`, `/chain`, `/scene`, `/file`, `/query` (39 endpoints total). See `primase-osc-help.pd` for the complete reference.
 
 ```bash
-oscsend localhost 9001 /telomere/transport/loop f 1
-oscsend localhost 9001 /telomere/tempo/bpm f 140
-oscsend localhost 9001 /telomere/pattern/set fff 0.0 0.25 0.5
-oscsend localhost 9001 /telomere/chain/add sf euclid 3 8
-oscsend localhost 9001 /telomere/query/dump
+oscsend localhost 9001 /primase/transport/loop f 1
+oscsend localhost 9001 /primase/tempo/bpm f 140
+oscsend localhost 9001 /primase/pattern/set fff 0.0 0.25 0.5
+oscsend localhost 9001 /primase/chain/add sf euclid 3 8
+oscsend localhost 9001 /primase/query/dump
 ```
 
 ## Adding a transform
 
 1. Create `transforms/mytransform.c`:
    ```c
-   #include "../telomere_transform.h"
-   #include "../telomere_pattern_api.h"
+   #include "../primase_transform.h"
+   #include "../primase_pattern_api.h"
 
-   static void transform_mytransform(t_telomere *x, int argc, t_atom *argv) {
+   static void transform_mytransform(t_primase *x, int argc, t_atom *argv) {
        /* read/write pattern via pattern_get_event / pattern_set_event etc. */
        pattern_sort(x);   /* REQUIRED if you modified any positions */
    }
 
    void mytransform_register(void) {
-       telomere_register_transform(gensym("mytransform"), transform_mytransform,
+       primase_register_transform(gensym("mytransform"), transform_mytransform,
                                    "description", min_args, max_args);
    }
    ```
@@ -195,16 +195,16 @@ oscsend localhost 9001 /telomere/query/dump
 3. Add the file to `TRANSFORM_SRC` in `Makefile`.
 4. Recompile.
 
-**Important:** transforms must call `pattern_sort(x)` after any operation that modifies event positions. Failure to sort causes events to fire out of order silently. See `telomere_pattern_api.h` for the full invariant.
+**Important:** transforms must call `pattern_sort(x)` after any operation that modifies event positions. Failure to sort causes events to fire out of order silently. See `primase_pattern_api.h` for the full invariant.
 
 ## Project structure
 
 ```
-telomere.c                  Core dispatch, chain eval, and object lifecycle
-telomere.h                  Struct definition (t_telomere, t_chain_entry)
-telomere_transform.h        Transform interface and registry types
-telomere_pattern_api.h/c    Pattern and source buffer API for transforms
-telomere_registry.c         Transform registry (linked-list)
+primase.c                  Core dispatch, chain eval, and object lifecycle
+primase.h                  Struct definition (t_primase, t_chain_entry)
+primase_transform.h        Transform interface and registry types
+primase_pattern_api.h/c    Pattern and source buffer API for transforms
+primase_registry.c         Transform registry (linked-list)
 transforms/
   builtins.c                Registration aggregator for built-in transforms
   palindrome.c rotate.c reverse.c fast.c slow.c
@@ -214,15 +214,15 @@ tests/
   pd_stub.c                 Minimal Pd runtime stubs for testing
 pd/
   m_pd.h                    Stub header for compile-time checking
-telomere-osc.pd             OSC receiver/router abstraction (mrpeach)
-telomere-osc-help.pd        OSC endpoint reference documentation
+primase-osc.pd             OSC receiver/router abstraction (mrpeach)
+primase-osc-help.pd        OSC endpoint reference documentation
 Makefile                    Platform-aware build system
 ```
 
 ## Design notes
 
-All timing data uses **normalized 0.0–1.0 positions** within a cycle, decoupling patterns from tempo and time signature. The transform system registry maps message names to transform functions so the core dispatcher never needs modification when transforms are added. Transforms access pattern data exclusively through a narrow API (`telomere_pattern_api.h`), insulating them from internal struct changes.
+All timing data uses **normalized 0.0–1.0 positions** within a cycle, decoupling patterns from tempo and time signature. The transform system registry maps message names to transform functions so the core dispatcher never needs modification when transforms are added. Transforms access pattern data exclusively through a narrow API (`primase_pattern_api.h`), insulating them from internal struct changes.
 
-The **source/derived split** separates what was recorded from what plays back. `source[]` is written only by recording and `read`; `pattern[]` is written only by `telomere_chain_eval()`. Every chain operation re-derives `pattern[]` from scratch, so any combination of transforms can be undone by removing chain entries — the recording is always intact.
+The **source/derived split** separates what was recorded from what plays back. `source[]` is written only by recording and `read`; `pattern[]` is written only by `primase_chain_eval()`. Every chain operation re-derives `pattern[]` from scratch, so any combination of transforms can be undone by removing chain entries — the recording is always intact.
 
 **Swing and jitter** are both applied at playback time, not baked into stored positions. Swing adjusts actual firing times (scheduling delay) as well as the position outlet; jitter affects only the output position and does not move the clock tick. This means swing changes can be heard immediately on the next event, and removing swing restores exact original timing with no residual drift.

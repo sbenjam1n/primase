@@ -1,11 +1,11 @@
-/* telomere_registry.c — Transform registry (linked-list) */
+/* primase_registry.c — Transform registry (linked-list) */
 
-#include "telomere_transform.h"
+#include "primase_transform.h"
 #include <string.h>
 
 static t_transform_entry *registry_head = NULL;
 
-void telomere_register_transform(t_symbol *name, t_transform_fn fn,
+void primase_register_transform(t_symbol *name, t_transform_fn fn,
                                  const char *description,
                                  int min_args, int max_args)
 {
@@ -13,7 +13,7 @@ void telomere_register_transform(t_symbol *name, t_transform_fn fn,
     t_transform_entry *cur = registry_head;
     while (cur) {
         if (cur->name == name) {
-            post("telomere: replacing transform '%s'", name->s_name);
+            post("primase: replacing transform '%s'", name->s_name);
             cur->fn          = fn;
             cur->description = description;
             cur->min_args    = min_args;
@@ -34,7 +34,7 @@ void telomere_register_transform(t_symbol *name, t_transform_fn fn,
     registry_head      = entry;
 }
 
-t_transform_entry *telomere_lookup_transform(t_symbol *name) {
+t_transform_entry *primase_lookup_transform(t_symbol *name) {
     t_transform_entry *cur = registry_head;
     while (cur) {
         if (cur->name == name) return cur;
@@ -43,11 +43,11 @@ t_transform_entry *telomere_lookup_transform(t_symbol *name) {
     return NULL;
 }
 
-t_transform_entry *telomere_get_registry_head(void) {
+t_transform_entry *primase_get_registry_head(void) {
     return registry_head;
 }
 
-void telomere_registry_free(void) {
+void primase_registry_free(void) {
     t_transform_entry *cur = registry_head;
     while (cur) {
         t_transform_entry *next = cur->next;

@@ -1,8 +1,8 @@
-# telomere — A Pure Data External for Algorithmic Rhythm
+# primase — A Pure Data External for Algorithmic Rhythm
 
 ## Overview
 
-**telomere** is a C external for Pure Data (Pd) that combines tap-input rhythm capture, variable quantization, Euclidean rhythm generation, metric modulation, and TidalCycles-inspired pattern transformations into a single object. It is designed to function as a self-contained rhythmic manipulation engine, drawing inspiration from the Soma Pulsar-23's approach to tapped-in loops with continuously variable quantization, while extending far beyond it with algorithmic composition tools.
+**primase** is a C external for Pure Data (Pd) that combines tap-input rhythm capture, variable quantization, Euclidean rhythm generation, metric modulation, and TidalCycles-inspired pattern transformations into a single object. It is designed to function as a self-contained rhythmic manipulation engine, drawing inspiration from the Soma Pulsar-23's approach to tapped-in loops with continuously variable quantization, while extending far beyond it with algorithmic composition tools.
 
 The name reflects the idea of rhythmic cycles that repeat, shorten, extend, and transform — much like the biological structures they reference.
 
@@ -23,7 +23,7 @@ The external is structured around five interconnected modules:
 All timing data is stored as **normalized floats between 0.0 and 1.0**, representing positions within a single abstract cycle. This is the key design decision borrowed from TidalCycles: by decoupling pattern data from absolute time, every transformation becomes time-signature-independent. A separate clock mechanism (either internal or via Pd's `[tempo]` object) maps normalized positions to real-world milliseconds.
 
 ```c
-typedef struct _telomere {
+typedef struct _primase {
     t_object x_obj;
 
     // Outlets
@@ -62,14 +62,14 @@ typedef struct _telomere {
     t_float  jitter_amount;       // Random timing offset, 0.0–1.0
     t_float  skip_probability;    // Chance of dropping an event, 0.0–1.0
 
-} t_telomere;
+} t_primase;
 ```
 
 ---
 
 ## Module 1: Input Capture
 
-When `telomere` receives a `bang` on its primary inlet, it records the current time relative to the cycle start. The raw timestamp is converted to a normalized 0.0–1.0 value using the current cycle length.
+When `primase` receives a `bang` on its primary inlet, it records the current time relative to the cycle start. The raw timestamp is converted to a normalized 0.0–1.0 value using the current cycle length.
 
 ```
 normalized_position = (current_time - cycle_start_time) / cycle_length_ms
@@ -166,7 +166,7 @@ This module implements TidalCycles-inspired operations on the internal pattern d
 Appends the reversed pattern to itself, doubling the cycle length.
 
 ```c
-void telomere_palindrome(t_telomere *x) {
+void primase_palindrome(t_primase *x) {
     int n = x->num_events;
     // Resize buffer to 2n
     x->normalized_times = realloc(x->normalized_times, 2 * n * sizeof(t_float));
@@ -191,7 +191,7 @@ Original `1010` → Palindrome `10100101` (8 steps).
 Cyclically shifts event positions by a number of steps. Equivalent to changing where in the pattern "beat 1" falls.
 
 ```c
-void telomere_rotate(t_telomere *x, int n) {
+void primase_rotate(t_primase *x, int n) {
     // Shift all normalized_times by n/num_events, wrapping with fmod
     t_float offset = (t_float)n / (t_float)x->num_events;
     for (int i = 0; i < x->num_events; i++) {
@@ -250,7 +250,7 @@ The ramp is implemented using Pd's `clock_delay` mechanism, incrementally adjust
 Patterns are saved as plain text files containing metadata and the normalized event list:
 
 ```
-# telomere pattern file
+# primase pattern file
 tempo 120.0
 meter 4 4
 grid 16
@@ -279,7 +279,7 @@ The external uses standard C file I/O (`fopen`, `fprintf`, `fscanf`) wrapped thr
 
 ## Algorithmic Variation
 
-On top of the deterministic transformations, telomere supports controlled randomness:
+On top of the deterministic transformations, primase supports controlled randomness:
 
 - **Jitter:** Adds a small random offset to each event's output time. The offset is scaled by `jitter_amount` and bounded to prevent events from crossing each other. `T_out = T_event + (random_float(-1, 1) * jitter_amount / grid_subdivision)`
 - **Probability gate:** Each event has a chance of being silently skipped based on `skip_probability`. A random float is generated per event; if it falls below the threshold, the bang is suppressed.
@@ -311,67 +311,67 @@ On top of the deterministic transformations, telomere supports controlled random
 ## Setup Function
 
 ```c
-void telomere_setup(void) {
-    telomere_class = class_new(
-        gensym("telomere"),
-        (t_newmethod)telomere_new,
-        (t_freemethod)telomere_free,
-        sizeof(t_telomere),
+void primase_setup(void) {
+    primase_class = class_new(
+        gensym("primase"),
+        (t_newmethod)primase_new,
+        (t_freemethod)primase_free,
+        sizeof(t_primase),
         CLASS_DEFAULT,
         A_DEFFLOAT,  // Optional: initial tempo
         0
     );
 
-    class_addbang(telomere_class, telomere_bang);
-    class_addfloat(telomere_class, telomere_float);
+    class_addbang(primase_class, primase_bang);
+    class_addfloat(primase_class, primase_float);
 
     // Quantization & grid
-    class_addmethod(telomere_class, (t_method)telomere_quantize,
+    class_addmethod(primase_class, (t_method)primase_quantize,
                     gensym("quantize"), A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_grid,
+    class_addmethod(primase_class, (t_method)primase_grid,
                     gensym("grid"), A_FLOAT, 0);
 
     // Euclidean
-    class_addmethod(telomere_class, (t_method)telomere_euclid,
+    class_addmethod(primase_class, (t_method)primase_euclid,
                     gensym("euclid"), A_FLOAT, A_FLOAT, 0);
 
     // Transformations
-    class_addmethod(telomere_class, (t_method)telomere_palindrome,
+    class_addmethod(primase_class, (t_method)primase_palindrome,
                     gensym("palindrome"), 0);
-    class_addmethod(telomere_class, (t_method)telomere_rotate,
+    class_addmethod(primase_class, (t_method)primase_rotate,
                     gensym("rotate"), A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_fast,
+    class_addmethod(primase_class, (t_method)primase_fast,
                     gensym("fast"), A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_slow,
+    class_addmethod(primase_class, (t_method)primase_slow,
                     gensym("slow"), A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_reverse,
+    class_addmethod(primase_class, (t_method)primase_reverse,
                     gensym("reverse"), 0);
 
     // Metric modulation
-    class_addmethod(telomere_class, (t_method)telomere_mod_tempo,
+    class_addmethod(primase_class, (t_method)primase_mod_tempo,
                     gensym("modulate_to_tempo"), A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_mod_meter,
+    class_addmethod(primase_class, (t_method)primase_mod_meter,
                     gensym("modulate_to_meter"), A_FLOAT, A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_pivot,
+    class_addmethod(primase_class, (t_method)primase_pivot,
                     gensym("pivot_subdivision"), A_FLOAT, 0);
 
     // Variation
-    class_addmethod(telomere_class, (t_method)telomere_jitter,
+    class_addmethod(primase_class, (t_method)primase_jitter,
                     gensym("jitter"), A_FLOAT, 0);
-    class_addmethod(telomere_class, (t_method)telomere_skip,
+    class_addmethod(primase_class, (t_method)primase_skip,
                     gensym("skip"), A_FLOAT, 0);
 
     // I/O
-    class_addmethod(telomere_class, (t_method)telomere_save,
+    class_addmethod(primase_class, (t_method)primase_save,
                     gensym("save"), A_SYMBOL, 0);
-    class_addmethod(telomere_class, (t_method)telomere_load,
+    class_addmethod(primase_class, (t_method)primase_load,
                     gensym("load"), A_SYMBOL, 0);
 
     // Utility
-    class_addmethod(telomere_class, (t_method)telomere_clear,
+    class_addmethod(primase_class, (t_method)primase_clear,
                     gensym("clear"), 0);
 
-    post("telomere: algorithmic rhythm engine loaded");
+    post("primase: algorithmic rhythm engine loaded");
 }
 ```
 
@@ -382,10 +382,10 @@ void telomere_setup(void) {
 The architecture is designed for easy addition of new transformations via function pointers:
 
 ```c
-typedef void (*pattern_transform_fn)(t_telomere *x, int argc, t_atom *argv);
+typedef void (*pattern_transform_fn)(t_primase *x, int argc, t_atom *argv);
 
 // Register new transforms at runtime or compile time
-class_addmethod(telomere_class, (t_method)my_new_transform,
+class_addmethod(primase_class, (t_method)my_new_transform,
                 gensym("my_transform"), A_GIMME, 0);
 ```
 
@@ -399,16 +399,16 @@ The external compiles against the Pd headers using standard platform toolchains:
 
 ```bash
 # Linux
-gcc -shared -o telomere.pd_linux -fPIC \
-    -I/usr/include/pd telomere.c -lm
+gcc -shared -o primase.pd_linux -fPIC \
+    -I/usr/include/pd primase.c -lm
 
 # macOS
-gcc -bundle -undefined dynamic_lookup -o telomere.pd_darwin \
-    -I/Applications/Pd.app/Contents/Resources/src telomere.c -lm
+gcc -bundle -undefined dynamic_lookup -o primase.pd_darwin \
+    -I/Applications/Pd.app/Contents/Resources/src primase.c -lm
 
 # Windows (MinGW)
-gcc -shared -o telomere.dll \
-    -I"C:/Program Files/Pd/src" telomere.c -lm -lpd
+gcc -shared -o primase.dll \
+    -I"C:/Program Files/Pd/src" primase.c -lm -lpd
 ```
 
 Place the compiled binary in your Pd search path or alongside your patch.
@@ -420,13 +420,13 @@ Place the compiled binary in your Pd search path or alongside your patch.
 ```
 [metro 500]
 |
-[telomere 120]  <-- create with 120 BPM
+[primase 120]  <-- create with 120 BPM
 |            |
 [makenote]   [print status]
 |
 [noteout]
 
-Messages to send to telomere:
+Messages to send to primase:
 [euclid 5 16(        -- generate E(5,16) rhythm
 [quantize 75(         -- 75% quantization
 [palindrome(          -- double the pattern as a palindrome
@@ -441,4 +441,4 @@ Messages to send to telomere:
 
 ## Summary
 
-telomere unifies several distinct rhythmic concepts — Euclidean distribution, variable quantization, polymetric cycle calculation, Steve Reich-style phasing, and TidalCycles pattern algebra — into a single Pd object with a clean message interface. Its normalized-time internal representation ensures that all transformations compose cleanly regardless of tempo or meter, and its C implementation keeps timing precise enough for real-time performance.
+primase unifies several distinct rhythmic concepts — Euclidean distribution, variable quantization, polymetric cycle calculation, Steve Reich-style phasing, and TidalCycles pattern algebra — into a single Pd object with a clean message interface. Its normalized-time internal representation ensures that all transformations compose cleanly regardless of tempo or meter, and its C implementation keeps timing precise enough for real-time performance.
